@@ -23,7 +23,7 @@ internal fun runCommand(
     val environment = builder.environment()
     val javaHome = System.getProperty("java.home")
     environment["JAVA_HOME"] = javaHome
-    environment["PATH"] = "$javaHome/bin:${environment["PATH"].orEmpty()}"
+    environment["PATH"] = "$javaHome/bin${File.pathSeparator}${environment["PATH"].orEmpty()}"
 
     val process = builder.start()
     val output = if (capture) {
@@ -56,7 +56,7 @@ internal fun runCommandWithTimeout(
     val environment = builder.environment()
     val javaHome = System.getProperty("java.home")
     environment["JAVA_HOME"] = javaHome
-    environment["PATH"] = "$javaHome/bin:${environment["PATH"].orEmpty()}"
+    environment["PATH"] = "$javaHome/bin${File.pathSeparator}${environment["PATH"].orEmpty()}"
     val process = builder.start()
     val buffer = ByteArrayOutputStream()
     val reader = thread(start = true, isDaemon = true, name = "runtime-loader-process-output") {
@@ -73,10 +73,15 @@ internal fun runCommandWithTimeout(
 }
 
 internal fun requireTool(name: String): String {
+    val names = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true) && !name.endsWith(".exe")) {
+        listOf(name, "$name.exe")
+    } else {
+        listOf(name)
+    }
     val path = System.getenv("PATH").orEmpty()
         .split(File.pathSeparatorChar)
         .asSequence()
-        .map { File(it, name) }
-        .firstOrNull { it.isFile && it.canExecute() }
+        .flatMap { directory -> names.asSequence().map { executable -> File(directory, executable) } }
+        .firstOrNull { it.isFile && (it.canExecute() || System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) }
     return path?.absolutePath ?: throw GradleException("Required tool is not on PATH: $name")
 }

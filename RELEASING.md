@@ -50,11 +50,11 @@ only after every platform job succeeds.
 
 The tag may optionally start with `v`, but after removing that prefix it must exactly match the
 `version` in `gradle/runtime-loader-release.properties`, and `CHANGELOG.md` must contain a matching
-release heading. For example, both of these tags select `0.1.0-alpha01`:
+release heading. For example, both of these tags select `0.1.0-alpha02`:
 
 ```text
-0.1.0-alpha01
-v0.1.0-alpha01
+0.1.0-alpha02
+v0.1.0-alpha02
 ```
 
 Configure exactly these two repository secrets before pushing a release tag:
@@ -142,7 +142,7 @@ the repository's Git tags. Create a tag exactly matching the Runtime Loader rele
 example:
 
 ```text
-0.1.0-alpha01
+0.1.0-alpha02
 ```
 
 The tag must contain the matching Kotlin artifacts/source, root `Package.swift`, and signer source.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0-alpha02
+
+Release-CI portability fixes after the unpublished `0.1.0-alpha01` validation run.
+
+- Install the SDL3 XScreenSaver build dependency on Ubuntu release runners.
+- Select the macOS slice from SDL3's release XCFramework instead of assuming a root framework.
+- Resolve LLVM tools portably on native Windows from Kotlin/Native or the runner LLVM installation.
+- Use the host path separator and Windows `.exe` lookup when spawning external tools.
+
 ## 0.1.0-alpha01
 
 Initial public alpha.

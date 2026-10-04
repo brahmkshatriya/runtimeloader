@@ -23,11 +23,11 @@ internal class WindowsPeRuntimeLoaderBackend(
     override val requiresHostBeforeModules: Boolean = true
 
     override fun requireTools() {
-        requireTool("llvm-ar")
-        requireTool("llvm-nm")
-        requireTool("llvm-objdump")
-        requireTool("llvm-objcopy")
         windowsToolchain()
+        llvmTool("llvm-ar")
+        llvmTool("llvm-nm")
+        llvmTool("llvm-objdump")
+        llvmTool("llvm-objcopy")
     }
 
     override fun runtimeFiles(): List<File> {
@@ -413,7 +413,7 @@ internal class WindowsPeRuntimeLoaderBackend(
 
     private fun definedSymbolKinds(binary: File): Map<String, Char> =
         runCommand(
-            listOf(requireTool("llvm-nm"), "-g", "--defined-only", binary.absolutePath),
+            listOf(llvmTool("llvm-nm"), "-g", "--defined-only", binary.absolutePath),
             capture = true,
         ).output.lineSequence().mapNotNull { line ->
             val parts = line.trim().split(Regex("\\s+"), limit = 3)
@@ -427,7 +427,7 @@ internal class WindowsPeRuntimeLoaderBackend(
 
     private fun definedFunctionSymbols(binary: File): Set<String> =
         runCommand(
-            listOf(requireTool("llvm-nm"), "-g", "--defined-only", binary.absolutePath),
+            listOf(llvmTool("llvm-nm"), "-g", "--defined-only", binary.absolutePath),
             capture = true,
         ).output.lineSequence().mapNotNull { line ->
             val parts = line.trim().split(Regex("\\s+"), limit = 3)
@@ -451,8 +451,8 @@ internal class WindowsPeRuntimeLoaderBackend(
     }
 
     private fun parseArchive(libraryName: String, archive: File): ParsedCoffObject {
-        val ar = requireTool("llvm-ar")
-        val objdump = requireTool("llvm-objdump")
+        val ar = llvmTool("llvm-ar")
+        val objdump = llvmTool("llvm-objdump")
         val temporary = Files.createTempDirectory("runtime-loader-pe-cache-").toFile()
         val members = runCommand(listOf(ar, "t", archive.absolutePath), capture = true)
             .output.lineSequence().filter { it.isNotBlank() }.toList()
@@ -547,7 +547,7 @@ internal class WindowsPeRuntimeLoaderBackend(
     private fun writeAbiSupportObject(objectInfo: ParsedCoffObject, destination: File) {
         if (objectInfo.includedSections.isEmpty()) return
         destination.parentFile.mkdirs()
-        val objcopy = requireTool("llvm-objcopy")
+        val objcopy = llvmTool("llvm-objcopy")
         val selected = File(objectInfo.temporaryDirectory, "cache-abi-selected.o")
         val sectionPatterns = collapsedSectionPatterns(objectInfo)
         val command = mutableListOf(objcopy)
@@ -605,7 +605,7 @@ internal class WindowsPeRuntimeLoaderBackend(
             .sorted()
         if (aliases.isEmpty()) return
 
-        val objcopy = requireTool("llvm-objcopy")
+        val objcopy = llvmTool("llvm-objcopy")
         val patched = File(objectFile.parentFile, "${objectFile.name}.refptr-patched")
         val safeLibrary = libraryName.replace(Regex("[^A-Za-z0-9_]"), "_")
         val command = mutableListOf(objcopy)
@@ -645,9 +645,9 @@ internal class WindowsPeRuntimeLoaderBackend(
             "__dyn_tls_init",
             "__dyn_tls_init_callback",
         )
-        val nm = requireTool("llvm-nm")
-        val ar = requireTool("llvm-ar")
-        val objcopy = requireTool("llvm-objcopy")
+        val nm = llvmTool("llvm-nm")
+        val ar = llvmTool("llvm-ar")
+        val objcopy = llvmTool("llvm-objcopy")
         val definitionsByMember = linkedMapOf<String, MutableSet<String>>()
         val archivePrefix = "${archive.absolutePath}:"
 
@@ -735,33 +735,86 @@ internal class WindowsPeRuntimeLoaderBackend(
 
     private fun undefinedSymbols(archive: File): Set<String> =
         runCommand(
-            listOf(requireTool("llvm-nm"), "-g", "-u", archive.absolutePath),
+            listOf(llvmTool("llvm-nm"), "-g", "-u", archive.absolutePath),
             capture = true,
         ).output.lineSequence().mapNotNull { line ->
             line.trim().split(Regex("\\s+")).lastOrNull()?.takeIf { it.isNotBlank() && !it.endsWith(":") }
         }.toSet()
 
-    private data class Toolchain(val clang: File, val sysroot: File)
+    private data class Toolchain(
+        val clang: File,
+        val sysroot: File,
+        val llvmBin: File,
+    )
 
     private fun windowsToolchain(): Toolchain {
         val properties = Properties().apply {
             File(konanHome, "konan/konan.properties").inputStream().use(::load)
         }
-        val llvmName = properties.getProperty("llvm.linux_x64.user")
-            ?: throw GradleException("Kotlin/Native LLVM dependency is missing for the Linux host")
+        val host = kotlinNativeHostName()
+        val llvmName = properties.getProperty("llvm.$host.user")
+            ?: throw GradleException("Kotlin/Native LLVM dependency is missing for host '$host'")
         val sysrootName = properties.getProperty("toolchainDependency.mingw_x64")
             ?: throw GradleException("Kotlin/Native MinGW toolchain dependency is missing")
         val dependencies = File(konanHome.parentFile, "dependencies")
         val llvm = File(dependencies, llvmName)
+        val llvmBin = File(llvm, "bin")
         val sysroot = File(dependencies, sysrootName)
-        val clang = File(llvm, "bin/clang")
-        if (!clang.isFile || !sysroot.isDirectory) {
+        val clang = executableIn(llvmBin, "clang")
+            ?: throw GradleException("Kotlin/Native host LLVM compiler is missing under $llvmBin")
+        if (!sysroot.isDirectory) {
             throw GradleException(
-                "Kotlin/Native Windows cross-toolchain is incomplete. Expected $clang and $sysroot. " +
+                "Kotlin/Native Windows cross-toolchain is incomplete. Expected $sysroot. " +
                     "Compile a mingwX64 target once so Kotlin/Native downloads its dependencies."
             )
         }
-        return Toolchain(clang, sysroot)
+        return Toolchain(clang, sysroot, llvmBin)
+    }
+
+    private fun llvmTool(name: String): String {
+        val toolchain = windowsToolchain()
+        executableIn(toolchain.llvmBin, name)?.let { return it.absolutePath }
+
+        if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+            // Kotlin/Native's MinGW dependency ships GNU binutils even when the compact host LLVM
+            // bundle omits llvm-nm/objdump/objcopy. Their COFF command-line/output formats used by
+            // this backend are compatible with the corresponding LLVM tools, so a stock K/N
+            // installation is sufficient on native Windows.
+            val binutilsName = name.removePrefix("llvm-")
+            executableIn(File(toolchain.sysroot, "bin"), binutilsName)?.let { return it.absolutePath }
+
+            listOfNotNull(
+                System.getenv("ProgramFiles"),
+                System.getenv("ProgramW6432"),
+            ).asSequence()
+                .map { File(it, "LLVM/bin") }
+                .mapNotNull { executableIn(it, name) }
+                .firstOrNull()
+                ?.let { return it.absolutePath }
+        }
+
+        return requireTool(name)
+    }
+
+    private fun executableIn(directory: File, name: String): File? {
+        val windows = System.getProperty("os.name").startsWith("Windows", ignoreCase = true)
+        val names = if (windows && !name.endsWith(".exe")) listOf("$name.exe", name) else listOf(name)
+        return names.asSequence().map { File(directory, it) }.firstOrNull(File::isFile)
+    }
+
+    private fun kotlinNativeHostName(): String {
+        val os = System.getProperty("os.name").lowercase()
+        val arch = System.getProperty("os.arch").lowercase()
+        return when {
+            os.startsWith("windows") -> "mingw_x64"
+            os.startsWith("mac") && (arch == "aarch64" || arch == "arm64") -> "macos_arm64"
+            os.startsWith("mac") -> "macos_x64"
+            os.startsWith("linux") && (arch == "x86_64" || arch == "amd64") -> "linux_x64"
+            else -> throw GradleException(
+                "Runtime Loader does not know the Kotlin/Native LLVM host key for os.name='${System.getProperty("os.name")}', " +
+                    "os.arch='${System.getProperty("os.arch")}'"
+            )
+        }
     }
 
     private fun cString(value: String): String =
