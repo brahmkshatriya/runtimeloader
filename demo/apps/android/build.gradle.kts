@@ -36,10 +36,15 @@ kotlin {
 }
 
 val extensionStoreProject = project(projects.demo.store.path)
+val androidExtensionStoreZip = extensionStoreProject.layout.buildDirectory.file(
+    "distributions/demo-extension-store-android.zip"
+)
 
 val prepareExtensionStoreAsset = tasks.register<Copy>("prepareExtensionStoreAsset") {
-    dependsOn("${extensionStoreProject.path}:packageExternalExtensionStore")
-    from(extensionStoreProject.layout.buildDirectory.file("distributions/demo-extension-store.zip"))
+    dependsOn("${extensionStoreProject.path}:packageExternalExtensionStoreAndroid")
+    from(androidExtensionStoreZip) {
+        rename { "demo-extension-store.zip" }
+    }
     into(layout.buildDirectory.dir("generated/runtimeLoaderAssets"))
 }
 

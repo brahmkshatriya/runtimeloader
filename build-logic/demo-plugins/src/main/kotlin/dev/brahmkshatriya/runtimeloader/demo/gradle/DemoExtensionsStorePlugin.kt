@@ -110,6 +110,15 @@ public class DemoExtensionsStorePlugin : Plugin<Project> {
             entryCompression = ZipEntryCompression.STORED
             from(generatedCatalog)
         }
+        val packageAndroidStore = project.tasks.register("packageExternalExtensionStoreAndroid", Zip::class.java) {
+            group = "extensions store"
+            description = "Package only Android extension artifacts plus generated catalog metadata."
+            dependsOn(generate)
+            archiveFileName.set("demo-extension-store-android.zip")
+            destinationDirectory.set(project.layout.buildDirectory.dir("distributions"))
+            entryCompression = ZipEntryCompression.STORED
+            from(generatedCatalog)
+        }
 
         project.tasks.register("extensionsStore") {
             group = "extensions store"
@@ -128,6 +137,11 @@ public class DemoExtensionsStorePlugin : Plugin<Project> {
             validate(extensions)
             packageStore.configure {
                 extensions.forEach { extension -> configureArtifacts(this, extension) }
+            }
+            packageAndroidStore.configure {
+                extensions.forEach { extension ->
+                    configureArtifacts(this, extension, includedPlatforms = setOf("android"))
+                }
             }
 
             val webExtension = extensions.firstOrNull { "web" in it.platforms }
@@ -170,11 +184,15 @@ public class DemoExtensionsStorePlugin : Plugin<Project> {
         validate.configure { mustRunAfter(generate) }
     }
 
-    private fun configureArtifacts(zip: Zip, extension: ResolvedExtensionProject) {
+    private fun configureArtifacts(
+        zip: Zip,
+        extension: ResolvedExtensionProject,
+        includedPlatforms: Set<String> = extension.platforms.toSet(),
+    ) {
         val child = extension.project
         val id = extension.metadata.id
 
-        if ("jvm" in extension.platforms) {
+        if ("jvm" in includedPlatforms && "jvm" in extension.platforms) {
             val jar = child.tasks.named("jvmJar", Jar::class.java)
             zip.dependsOn(jar)
             zip.from(jar.flatMap { it.archiveFile }) {
@@ -183,7 +201,7 @@ public class DemoExtensionsStorePlugin : Plugin<Project> {
             }
         }
 
-        if ("android" in extension.platforms) {
+        if ("android" in includedPlatforms && "android" in extension.platforms) {
             val dexTask = child.tasks.named("runtimeLoaderAndroidDex")
             val dexFile = child.layout.buildDirectory.file(
                 extension.runtimeLoader.moduleId.map { moduleId ->
@@ -197,7 +215,7 @@ public class DemoExtensionsStorePlugin : Plugin<Project> {
             }
         }
 
-        if ("web" in extension.platforms) {
+        if ("web" in includedPlatforms && "web" in extension.platforms) {
             val syncTask = child.tasks.named("wasmJsDevelopmentExecutableCompileSync")
             val moduleName = wasmModuleName(child)
             val syncDir = child.layout.buildDirectory.dir("compileSync/wasmJs/main/developmentExecutable/kotlin")
@@ -213,7 +231,7 @@ public class DemoExtensionsStorePlugin : Plugin<Project> {
         }
 
         NATIVE_STORE_TARGETS.forEach { target ->
-            if (target.platform !in extension.platforms) return@forEach
+            if (target.platform !in includedPlatforms || target.platform !in extension.platforms) return@forEach
             val host = checkNotNull(extension.nativeHosts[target.gradleTarget])
             val outputName = nativeOutputName(extension.runtimeLoader, target.platform)
             val nativeDir = host.layout.buildDirectory.dir(
