@@ -648,29 +648,25 @@ internal class WindowsPeRuntimeLoaderBackend(
         val nm = llvmTool("llvm-nm")
         val ar = llvmTool("llvm-ar")
         val objcopy = llvmTool("llvm-objcopy")
-        val definitionsByMember = linkedMapOf<String, MutableSet<String>>()
-        runCommand(listOf(nm, "-A", "-g", "--defined-only", archive.absolutePath), capture = true)
+        val archiveMembers = runCommand(listOf(ar, "t", archive.absolutePath), capture = true)
             .output.lineSequence()
-            .forEach { raw ->
-                val line = raw.trim()
-                val match = Regex("^(.*?)\\s+[0-9A-Fa-f]+\\s+[A-Za-z]\\s+(.+)$").matchEntire(line)
-                    ?: return@forEach
-                val symbol = match.groupValues[2]
-                if (symbol !in collisions) return@forEach
-                val location = match.groupValues[1].removeSuffix(":")
-                val colonMarker = "${archive.name}:"
-                val parenMarker = "${archive.name}("
-                val member = when {
-                    colonMarker in location -> location.substringAfter(colonMarker)
-                    parenMarker in location && location.endsWith(')') ->
-                        location.substringAfter(parenMarker).dropLast(1)
-                    else -> return@forEach
-                }
-                if (member.isBlank()) return@forEach
-                definitionsByMember.getOrPut(member) { linkedSetOf() }.add(symbol)
-            }
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .toList()
 
-        if (definitionsByMember.isEmpty()) return
+        val candidateBasenames = setOf("dyn_tls_init.obj", "pesect.obj", "utility.obj", "tlsdyn.obj")
+        val candidateMembers = archiveMembers.filter { member ->
+            member.substringAfterLast('\\').substringAfterLast('/') in candidateBasenames
+        }
+
+        val remainingBeforePatch = definedSymbols(archive).intersect(collisions)
+        if (remainingBeforePatch.isEmpty()) return
+        if (candidateMembers.isEmpty()) {
+            throw GradleException(
+                "Skiko MinGW cache still defines CRT symbols ${remainingBeforePatch.sorted()}, " +
+                    "but no known CRT archive members were found in ${archive.name}"
+            )
+        }
 
         // Break hardlinks to static-cache before rewriting this runtime-loader-only cache view.
         val detached = File(archive.parentFile, "${archive.name}.runtime-loader-patched")
@@ -678,8 +674,9 @@ internal class WindowsPeRuntimeLoaderBackend(
         Files.move(detached.toPath(), archive.toPath(), StandardCopyOption.REPLACE_EXISTING)
 
         val patchDirectory = Files.createTempDirectory("runtime-loader-pe-skiko-").toFile()
+        var patchedDefinitions = 0
         try {
-            definitionsByMember.entries.forEachIndexed { memberIndex, (member, symbols) ->
+            candidateMembers.forEachIndexed { memberIndex, member ->
                 val original = File(patchDirectory, "member-$memberIndex.obj")
                 val basename = member.substringAfterLast('\\').substringAfterLast('/')
                 val patched = File(patchDirectory, "patched-$memberIndex-$basename")
@@ -692,6 +689,12 @@ internal class WindowsPeRuntimeLoaderBackend(
                     throw GradleException("llvm-ar could not extract '$member' from ${archive.name}: $stderr")
                 }
 
+                val symbols = runCommand(listOf(nm, "-g", "--defined-only", original.absolutePath), capture = true)
+                    .output.lineSequence()
+                    .mapNotNull { line -> line.trim().split(Regex("\\s+")).lastOrNull() }
+                    .filterTo(linkedSetOf()) { it in collisions }
+                if (symbols.isEmpty()) return@forEachIndexed
+
                 val redefine = mutableListOf(objcopy)
                 symbols.sorted().forEach { symbol ->
                     val safeSymbol = symbol.replace(Regex("[^A-Za-z0-9_]"), "_")
@@ -702,13 +705,21 @@ internal class WindowsPeRuntimeLoaderBackend(
                 runCommand(redefine)
                 runCommand(listOf(ar, "d", archive.absolutePath, member))
                 runCommand(listOf(ar, "r", archive.absolutePath, patched.absolutePath))
+                patchedDefinitions += symbols.size
             }
             runCommand(listOf(ar, "s", archive.absolutePath))
         } finally {
             patchDirectory.deleteRecursively()
         }
+
+        val remainingAfterPatch = definedSymbols(archive).intersect(collisions)
+        if (remainingAfterPatch.isNotEmpty()) {
+            throw GradleException(
+                "Could not redirect Skiko MSVC CRT definitions: ${remainingAfterPatch.sorted()} remain in ${archive.name}"
+            )
+        }
         log(
-            "redirected ${definitionsByMember.values.sumOf { it.size }} Skiko MSVC CRT " +
+            "redirected $patchedDefinitions Skiko MSVC CRT " +
                 "definitions to the MinGW process CRT"
         )
     }
