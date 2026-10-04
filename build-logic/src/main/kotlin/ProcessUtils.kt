@@ -138,7 +138,7 @@ private fun prepareProcessCommand(command: List<String>): PreparedProcessCommand
     if (isObjcopy(command.first()) && estimatedCommandLength(command) >= 7000) {
         val responseFile = File.createTempFile("runtime-loader-objcopy-", ".args")
         responseFile.writeText(
-            command.drop(1).joinToString("\r\n", postfix = "\r\n", transform = ::responseFileArgument)
+            command.drop(1).joinToString("\r\n", postfix = "\r\n", transform = ::objcopyResponseFileArgument)
         )
         return PreparedProcessCommand(
             command = listOf(command.first(), "@${responseFile.absolutePath}"),
@@ -180,6 +180,9 @@ private fun estimatedCommandLength(command: List<String>): Int =
 private fun responseFileArgument(value: String): String =
     if (value.none(Char::isWhitespace) && '"' !in value) value
     else "\"${value.replace("\"", "\\\"")}\""
+
+private fun objcopyResponseFileArgument(value: String): String =
+    responseFileArgument(value.replace('\\', '/'))
 
 private fun windowsCmdQuote(value: String): String =
     "\"" + value.replace("%", "%%").replace("\"", "\"\"") + "\""

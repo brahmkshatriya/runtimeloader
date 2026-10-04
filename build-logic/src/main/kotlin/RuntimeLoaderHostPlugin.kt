@@ -337,7 +337,26 @@ class RuntimeLoaderHostPlugin : Plugin<Project> {
                     }
 
                 if (targetName.startsWith("linux") && isCurrentNativeHostTarget(targetName)) {
-                    targetBuild.configure { nativeLinkDirectories.add("/usr/lib") }
+                    val systemLibraryDirectories = buildList {
+                        add("/usr/lib")
+                        when (targetName) {
+                            "linuxX64" -> addAll(
+                                listOf(
+                                    "/usr/lib/x86_64-linux-gnu",
+                                    "/lib/x86_64-linux-gnu",
+                                )
+                            )
+                            "linuxArm64" -> addAll(
+                                listOf(
+                                    "/usr/lib/aarch64-linux-gnu",
+                                    "/lib/aarch64-linux-gnu",
+                                )
+                            )
+                        }
+                    }.filter { project.file(it).isDirectory }
+                    targetBuild.configure {
+                        nativeLinkDirectories.addAll(systemLibraryDirectories)
+                    }
                 }
 
                 if (targetName == "mingwX64") {

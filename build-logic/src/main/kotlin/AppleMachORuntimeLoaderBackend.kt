@@ -69,7 +69,11 @@ internal class AppleMachORuntimeLoaderBackend(
         val safeId = output.nameWithoutExtension.replace(Regex("[^A-Za-z0-9_.-]"), "_")
         val bootstrapSource = File(workDirectory, "module_bootstrap_$safeId.c")
         val objectFile = File(workDirectory, "module_bootstrap_$safeId.o")
-        val initSymbol = "_Konan_init_${module.name}"
+        // Kotlin/Native names the initializer `_Konan_init_*` at the IR/linker abstraction used
+        // by ELF/COFF. Mach-O adds its conventional leading underscore to external C symbols in
+        // the object symbol table, and the asm label below bypasses Clang's automatic mangling.
+        // Use the actual Mach-O linker symbol here so the bootstrap and cache object agree.
+        val initSymbol = "__Konan_init_${module.name}"
 
         exposeModuleSymbols(moduleArchive, initSymbol, log)
         bootstrapSource.writeText(
