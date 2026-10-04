@@ -386,7 +386,7 @@ internal class NativeRuntimeLoaderPipeline(
         return relative.split('/').getOrNull(2)?.takeIf(String::isNotEmpty)
     }
 
-    private fun findMavenKlib(uniqueName: String, evidence: Set<String>, moduleCache: File): File {
+    private fun findMavenKlib(uniqueName: String, evidence: Set<String>, moduleCache: File): File? {
         if (':' !in uniqueName) throw GradleException("Missing non-Maven KLIB identity: $uniqueName")
         val group = uniqueName.substringBefore(':')
         val module = uniqueName.substringAfter(':')
@@ -440,12 +440,7 @@ internal class NativeRuntimeLoaderPipeline(
                     ?.let { candidates += evidence.maxWithOrNull(naturalVersionComparator)!! to candidate }
             }
         }
-        if (candidates.isEmpty()) {
-            val expected = evidence.sortedWith(naturalVersionComparator).joinToString().ifEmpty { "an available version" }
-            throw GradleException(
-                "Could not find Native KLIB $uniqueName ($expected) in $moduleCache or resolve it through Gradle."
-            )
-        }
+        if (candidates.isEmpty()) return null
         return candidates.maxWithOrNull { a, b -> naturalVersionComparator.compare(a.first, b.first) }!!.second
     }
 
@@ -482,13 +477,27 @@ internal class NativeRuntimeLoaderPipeline(
                         }
                         addAll(dependerVersions)
                     }
-                    inspector.info(findMavenKlib(name, resolutionEvidence, moduleCache))
-                        .also { compatibility += it.name }
+                    val path = findMavenKlib(name, resolutionEvidence, moduleCache)
+                    if (path == null) {
+                        log(
+                            "deferring Native KLIB $name until more Gradle version evidence is available " +
+                                "(${resolutionEvidence.sortedWith(naturalVersionComparator).joinToString().ifEmpty { "none" }})"
+                        )
+                        return@forEach
+                    }
+                    inspector.info(path).also { compatibility += it.name }
                 }
                 graph[info.name] = info
                 added = true
             }
-            if (!added) throw GradleException("Could not resolve KLIB dependencies: $missing")
+            if (!added) {
+                val evidence = moduleVersionEvidence(graph.values.map { it.path })
+                val details = missing.joinToString("; ") { name ->
+                    val versions = evidence[name].orEmpty().sortedWith(naturalVersionComparator).joinToString().ifEmpty { "none" }
+                    "$name (Gradle versions: $versions)"
+                }
+                throw GradleException("Could not resolve KLIB dependencies after resolving the available graph: $details")
+            }
         }
         log("resolved ${graph.size} KLIB identities (${implementation.size} implementation, ${compatibility.size} compatibility)")
         return ResolvedGraph(graph, implementation, compatibility)

@@ -340,7 +340,9 @@ internal class AppleMachORuntimeLoaderBackend(
         // path we do not use an exported-symbol allow-list. Force the module-required Kotlin ABI
         // roots to survive dead stripping while the cache view makes those symbols external.
         requiredExports.forEach { symbol ->
-            command += listOf("-linker-option", "-Wl,-u,$symbol")
+            // Pass -u and the Kotlin symbol as distinct raw linker arguments. Kotlin symbol names
+            // can contain commas inside generic signatures, which -Wl,-u,<symbol> would split.
+            command += listOf("-linker-option", "-u", "-linker-option", symbol)
         }
         val swiftLibraryDirectory = activeIosSwiftLibraryDirectory()
         command += listOf("-linker-option", "-L${swiftLibraryDirectory.absolutePath}")
