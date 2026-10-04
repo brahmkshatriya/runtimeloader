@@ -6,9 +6,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
-import java.util.zip.ZipEntry
-import java.util.zip.ZipFile
-import java.util.zip.ZipOutputStream
 
 /**
  * Mach-O backend for Kotlin/Native macOS and iOS hosts/modules.
@@ -345,6 +342,8 @@ internal class AppleMachORuntimeLoaderBackend(
         requiredExports.forEach { symbol ->
             command += listOf("-linker-option", "-Wl,-u,$symbol")
         }
+        val swiftLibraryDirectory = activeIosSwiftLibraryDirectory()
+        command += listOf("-linker-option", "-L${swiftLibraryDirectory.absolutePath}")
         appendLinkInputs(command, graph, order, hybridCache, linkDirectories, linkerOptions)
         log("linking iOS/Mach-O host framework with ${requiredExports.size} module-required Kotlin exports")
         runCommand(command)
@@ -370,78 +369,23 @@ internal class AppleMachORuntimeLoaderBackend(
         linkerOptions.forEach { option -> command += listOf("-linker-option", option) }
         order.forEach { name ->
             val item = graph.getValue(name)
-            val linkLibrary = sanitizedAppleHostLibrary(hybridCache, item.path)
-            command += listOf("-library", linkLibrary.absolutePath)
+            command += listOf("-library", item.path.absolutePath)
             if (cacheArchive(hybridCache, name) != null) {
                 command += "-Xcached-library=${item.path.absolutePath},${cacheDir(hybridCache, name).absolutePath}"
             }
         }
     }
 
-    private fun sanitizedAppleHostLibrary(hybridCache: File, source: File): File {
-        if (target != "ios_arm64" || !source.isFile || source.extension != "klib") return source
-
-        val manifest = runCatching {
-            ZipFile(source).use { archive ->
-                val entry = archive.getEntry("default/manifest") ?: return@use null
-                archive.getInputStream(entry).use { it.readBytes().toString(Charsets.UTF_8) }
-            }
-        }.getOrNull() ?: return source
-        val staleSwiftPath = Regex(
-            "-L/Applications/[^\\s]+\\.app/Contents/Developer/Toolchains/" +
-                "XcodeDefault\\.xctoolchain/usr/lib/swift/iphoneos"
-        )
-        if (!staleSwiftPath.containsMatchIn(manifest)) return source
-
+    private fun activeIosSwiftLibraryDirectory(): File {
         val swiftc = runCommand(xcrun("--find", "swiftc"), capture = true).output.trim()
         if (swiftc.isEmpty()) throw GradleException("xcrun did not report the active Swift compiler")
         val usrDirectory = File(swiftc).parentFile?.parentFile
             ?: throw GradleException("Could not derive the active Xcode toolchain from Swift compiler: $swiftc")
-        val swiftLibraryDirectory = File(usrDirectory, "lib/swift/iphoneos")
-        if (!swiftLibraryDirectory.isDirectory) {
-            throw GradleException("Active Xcode Swift library directory is missing: $swiftLibraryDirectory")
-        }
-        val replacement = "-L${swiftLibraryDirectory.absolutePath}"
-
-        val destinationDirectory = File(hybridCache, "runtime-loader-klibs").apply { mkdirs() }
-        val destination = File(destinationDirectory, source.name)
-        val sourceStamp = "${source.length()}:${source.lastModified()}:$replacement"
-        val stamp = File(destinationDirectory, source.name + ".apple-link.stamp")
-        if (destination.isFile && stamp.takeIf(File::isFile)?.readText() == sourceStamp) return destination
-
-        val temporary = File(destinationDirectory, source.name + ".apple-link.tmp").apply { delete() }
-        var changed = false
-        ZipFile(source).use { input ->
-            ZipOutputStream(temporary.outputStream().buffered()).use { output ->
-                val entries = input.entries()
-                while (entries.hasMoreElements()) {
-                    val entry = entries.nextElement()
-                    val replacementEntry = ZipEntry(entry.name).apply {
-                        time = entry.time
-                        comment = entry.comment
-                        extra = entry.extra
-                    }
-                    output.putNextEntry(replacementEntry)
-                    val bytes = input.getInputStream(entry).use { it.readBytes() }
-                    if (entry.name == "default/manifest") {
-                        val text = bytes.toString(Charsets.UTF_8)
-                        val rewritten = staleSwiftPath.replace(text, replacement)
-                        changed = changed || rewritten != text
-                        output.write(rewritten.toByteArray(Charsets.UTF_8))
-                    } else {
-                        output.write(bytes)
-                    }
-                    output.closeEntry()
-                }
+        return File(usrDirectory, "lib/swift/iphoneos").also { directory ->
+            if (!directory.isDirectory) {
+                throw GradleException("Active Xcode Swift library directory is missing: $directory")
             }
         }
-        if (!changed) {
-            temporary.delete()
-            return source
-        }
-        Files.move(temporary.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        stamp.writeText(sourceStamp)
-        return destination
     }
 
     private fun writeIosFrameworkInfoPlist(framework: File, executable: String, safeId: String) {
