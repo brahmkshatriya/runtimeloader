@@ -114,7 +114,6 @@ jobs:
             libxrender-dev \
             libxss-dev \
             libxtst-dev \
-            llvm \
             ninja-build \
             pkg-config \
             wayland-protocols \

@@ -71,7 +71,7 @@ internal class AppleMachORuntimeLoaderBackend(
         val objectFile = File(workDirectory, "module_bootstrap_$safeId.o")
         val initSymbol = "_Konan_init_${module.name}"
 
-        exposeModuleSymbols(moduleArchive, log)
+        exposeModuleSymbols(moduleArchive, initSymbol, log)
         bootstrapSource.writeText(
             """
             #include <pthread.h>
@@ -139,22 +139,31 @@ internal class AppleMachORuntimeLoaderBackend(
         return output
     }
 
-    private fun exposeModuleSymbols(archive: File, log: (String) -> Unit) {
+    private fun exposeModuleSymbols(archive: File, initSymbol: String, log: (String) -> Unit) {
         val temp = Files.createTempDirectory("runtime-loader-macho-module-").toFile()
         try {
             val members = archiveMembers(archive)
             runCommand(xcrun("ar", "x", archive.absolutePath), cwd = temp)
             var exposed = 0
+            var initExposed = false
             members.forEach { member ->
                 val objectFile = File(temp, member)
                 if (!objectFile.isFile) return@forEach
                 val symbols = definedFunctionSymbols(objectFile)
-                if (symbols.isEmpty()) return@forEach
-                patchMachOObjectSymbols(objectFile, makeExternal = symbols, makeWeak = emptySet())
+                val externalSymbols = symbols + initSymbol
+                val matched = patchMachOObjectSymbols(
+                    objectFile,
+                    makeExternal = externalSymbols,
+                    makeWeak = emptySet(),
+                )
+                if (initSymbol in matched) initExposed = true
                 exposed += symbols.size
             }
             rebuildArchive(archive, temp, members)
-            log("exposed $exposed Mach-O module functions for dlsym")
+            if (!initExposed) {
+                throw GradleException("Kotlin/Native cache is missing module init symbol '$initSymbol': $archive")
+            }
+            log("exposed $exposed Mach-O module functions plus '$initSymbol' for module bootstrap")
         } finally {
             temp.deleteRecursively()
         }
@@ -441,12 +450,12 @@ internal class AppleMachORuntimeLoaderBackend(
         objectFile: File,
         makeExternal: Set<String>,
         makeWeak: Set<String>,
-    ) {
-        if (makeExternal.isEmpty() && makeWeak.isEmpty()) return
+    ): Set<String> {
+        if (makeExternal.isEmpty() && makeWeak.isEmpty()) return emptySet()
         val bytes = objectFile.readBytes()
-        if (bytes.size < MACH_HEADER_64_SIZE) return
+        if (bytes.size < MACH_HEADER_64_SIZE) return emptySet()
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-        if (buffer.getInt(0) != MH_MAGIC_64) return
+        if (buffer.getInt(0) != MH_MAGIC_64) return emptySet()
 
         val ncmds = buffer.getInt(16)
         var commandOffset = MACH_HEADER_64_SIZE
@@ -467,11 +476,12 @@ internal class AppleMachORuntimeLoaderBackend(
             }
             commandOffset += commandSize
         }
-        if (symoff < 0 || stroff < 0 || nsyms < 0 || strsize < 0) return
-        if (symoff.toLong() + nsyms.toLong() * NLIST_64_SIZE > bytes.size) return
-        if (stroff.toLong() + strsize.toLong() > bytes.size) return
+        if (symoff < 0 || stroff < 0 || nsyms < 0 || strsize < 0) return emptySet()
+        if (symoff.toLong() + nsyms.toLong() * NLIST_64_SIZE > bytes.size) return emptySet()
+        if (stroff.toLong() + strsize.toLong() > bytes.size) return emptySet()
 
         var changed = false
+        val matched = linkedSetOf<String>()
         repeat(nsyms) { index ->
             val offset = symoff + index * NLIST_64_SIZE
             val stringIndex = buffer.getInt(offset)
@@ -484,6 +494,7 @@ internal class AppleMachORuntimeLoaderBackend(
             val name = String(bytes, start, end - start, Charsets.UTF_8)
 
             if (name in makeExternal) {
+                matched += name
                 val type = bytes[offset + 4].toInt() and 0xff
                 val updated = (type and N_PEXT.inv()) or N_EXT
                 if (updated != type) {
@@ -492,6 +503,7 @@ internal class AppleMachORuntimeLoaderBackend(
                 }
             }
             if (name in makeWeak) {
+                matched += name
                 val description = buffer.getShort(offset + 6).toInt() and 0xffff
                 val updated = description or N_WEAK_DEF
                 if (updated != description) {
@@ -501,6 +513,7 @@ internal class AppleMachORuntimeLoaderBackend(
             }
         }
         if (changed) objectFile.writeBytes(bytes)
+        return matched
     }
 
     private fun cString(value: String): String =

@@ -2,6 +2,8 @@ package dev.brahmkshatriya.runtimeloader.gradle
 
 import org.gradle.api.GradleException
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
@@ -19,7 +21,6 @@ internal class LinuxElfRuntimeLoaderBackend(
     override fun requireTools() {
         requireTool("nm")
         requireTool("ar")
-        requireTool("llvm-objcopy")
         linuxToolchain()
     }
 
@@ -83,7 +84,6 @@ internal class LinuxElfRuntimeLoaderBackend(
 
     private fun exposeModuleSymbols(archive: File, log: (String) -> Unit) {
         val ar = requireTool("ar")
-        val objcopy = requireTool("llvm-objcopy")
         val temp = Files.createTempDirectory("runtime-loader-module-").toFile()
         try {
             val members = runCommand(listOf(ar, "t", archive.absolutePath), capture = true)
@@ -93,12 +93,9 @@ internal class LinuxElfRuntimeLoaderBackend(
             members.forEach { member ->
                 val obj = File(temp, member)
                 if (!obj.isFile) return@forEach
-                val callableSymbols = rawDefinedFunctionSymbols(obj).sorted()
+                val callableSymbols = rawDefinedFunctionSymbols(obj)
                 if (callableSymbols.isEmpty()) return@forEach
-                val command = mutableListOf(objcopy)
-                callableSymbols.forEach { symbol -> command += "--set-symbol-visibility=$symbol=default" }
-                command += obj.absolutePath
-                runCommand(command)
+                patchElfObjectSymbols(obj, makeDefault = callableSymbols, makeWeak = emptySet())
                 exported += callableSymbols.size
             }
             archive.delete()
@@ -117,7 +114,6 @@ internal class LinuxElfRuntimeLoaderBackend(
         moduleLibraries: List<File>,
         log: (String) -> Unit,
     ) {
-        val objcopy = requireTool("llvm-objcopy")
         val ar = requireTool("ar")
         log("creating Linux/ELF host cache view for ${moduleLibraries.size} module(s)")
         hardlinkCopyTree(staticCache, hybridCache)
@@ -142,19 +138,15 @@ internal class LinuxElfRuntimeLoaderBackend(
                     val obj = File(temp, member)
                     if (!obj.exists()) return@memberLoop
                     val defined = rawDefinedSymbols(obj)
-                    val makeDefault = (defined intersect imports).sorted()
+                    val makeDefault = (defined intersect imports).toSet()
                     val makeWeak = if (name in resolved.compatibility) {
                         (defined intersect implementationSymbols)
                             .filterNot { it.startsWith("_Konan_init_") }
-                            .sorted()
-                    } else emptyList()
+                            .toSet()
+                    } else emptySet()
                     if (makeDefault.isEmpty() && makeWeak.isEmpty()) return@memberLoop
 
-                    val command = mutableListOf(objcopy)
-                    makeDefault.forEach { command += "--set-symbol-visibility=$it=default" }
-                    makeWeak.forEach { command += "--weaken-symbol=$it" }
-                    command += obj.absolutePath
-                    runCommand(command)
+                    patchElfObjectSymbols(obj, makeDefault, makeWeak)
                     exposed += makeDefault
                     weakened += makeWeak.size
                     archiveChanged = true
@@ -258,6 +250,116 @@ internal class LinuxElfRuntimeLoaderBackend(
         }.toSet()
     }
 
+    /**
+     * Patch ELF64 symbol visibility/binding directly so Runtime Loader is not coupled to a
+     * particular host llvm-objcopy version. Kotlin/Native Linux x64/arm64 cache objects are
+     * little-endian ELF64 relocatables. st_other's low two bits encode visibility, while the high
+     * nibble of st_info encodes GLOBAL/WEAK binding.
+     */
+    private fun patchElfObjectSymbols(
+        objectFile: File,
+        makeDefault: Set<String>,
+        makeWeak: Set<String>,
+    ) {
+        if (makeDefault.isEmpty() && makeWeak.isEmpty()) return
+        val bytes = objectFile.readBytes()
+        if (bytes.size < ELF64_HEADER_SIZE ||
+            bytes[0] != 0x7f.toByte() || bytes[1] != 'E'.code.toByte() ||
+            bytes[2] != 'L'.code.toByte() || bytes[3] != 'F'.code.toByte() ||
+            bytes[ELF_EI_CLASS].toInt() != ELFCLASS64 ||
+            bytes[ELF_EI_DATA].toInt() != ELFDATA2LSB
+        ) {
+            throw GradleException("Expected a little-endian ELF64 cache object: $objectFile")
+        }
+
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val sectionOffset = buffer.getLong(ELF64_E_SHOFF).checkedOffset("section table", objectFile)
+        val sectionEntrySize = buffer.getShort(ELF64_E_SHENTSIZE).toInt() and 0xffff
+        var sectionCount = buffer.getShort(ELF64_E_SHNUM).toInt() and 0xffff
+        if (sectionEntrySize < ELF64_SECTION_HEADER_SIZE || sectionOffset + sectionEntrySize > bytes.size) {
+            throw GradleException("Invalid ELF64 section table in $objectFile")
+        }
+        if (sectionCount == 0) {
+            val extendedCount = buffer.getLong(sectionOffset + ELF64_SH_SIZE)
+            if (extendedCount <= 0 || extendedCount > Int.MAX_VALUE) {
+                throw GradleException("Invalid extended ELF64 section count in $objectFile")
+            }
+            sectionCount = extendedCount.toInt()
+        }
+        if (sectionOffset.toLong() + sectionCount.toLong() * sectionEntrySize > bytes.size.toLong()) {
+            throw GradleException("ELF64 section table exceeds file bounds: $objectFile")
+        }
+
+        var changed = false
+        repeat(sectionCount) { sectionIndex ->
+            val section = sectionOffset + sectionIndex * sectionEntrySize
+            val type = buffer.getInt(section + ELF64_SH_TYPE)
+            if (type != SHT_SYMTAB && type != SHT_DYNSYM) return@repeat
+
+            val symbolsOffset = buffer.getLong(section + ELF64_SH_OFFSET).checkedOffset("symbol table", objectFile)
+            val symbolsSize = buffer.getLong(section + ELF64_SH_SIZE)
+            val symbolEntrySize = buffer.getLong(section + ELF64_SH_ENTSIZE)
+            val stringTableIndex = buffer.getInt(section + ELF64_SH_LINK).toLong() and 0xffffffffL
+            if (symbolsSize < 0 || symbolEntrySize < ELF64_SYMBOL_SIZE || stringTableIndex >= sectionCount) {
+                throw GradleException("Invalid ELF64 symbol table in $objectFile")
+            }
+            if (symbolsOffset.toLong() + symbolsSize > bytes.size.toLong()) {
+                throw GradleException("ELF64 symbol table exceeds file bounds: $objectFile")
+            }
+
+            val stringsSection = sectionOffset + stringTableIndex.toInt() * sectionEntrySize
+            val stringsOffset = buffer.getLong(stringsSection + ELF64_SH_OFFSET).checkedOffset("string table", objectFile)
+            val stringsSize = buffer.getLong(stringsSection + ELF64_SH_SIZE)
+            if (stringsSize < 0 || stringsOffset.toLong() + stringsSize > bytes.size.toLong()) {
+                throw GradleException("ELF64 string table exceeds file bounds: $objectFile")
+            }
+
+            val symbolCount = symbolsSize / symbolEntrySize
+            if (symbolCount > Int.MAX_VALUE) {
+                throw GradleException("ELF64 symbol table is too large: $objectFile")
+            }
+            repeat(symbolCount.toInt()) symbolLoop@{ symbolIndex ->
+                val symbolOffset = symbolsOffset + (symbolIndex * symbolEntrySize).toInt()
+                val stringIndex = buffer.getInt(symbolOffset + ELF64_ST_NAME).toLong() and 0xffffffffL
+                if (stringIndex <= 0 || stringIndex >= stringsSize) return@symbolLoop
+                val name = elfString(bytes, stringsOffset + stringIndex.toInt(), stringsOffset + stringsSize.toInt())
+                if (name.isEmpty()) return@symbolLoop
+
+                if (name in makeDefault) {
+                    val otherOffset = symbolOffset + ELF64_ST_OTHER
+                    val other = bytes[otherOffset].toInt() and 0xff
+                    val updated = other and ELF_ST_VISIBILITY_MASK.inv()
+                    if (updated != other) {
+                        bytes[otherOffset] = updated.toByte()
+                        changed = true
+                    }
+                }
+                if (name in makeWeak) {
+                    val infoOffset = symbolOffset + ELF64_ST_INFO
+                    val info = bytes[infoOffset].toInt() and 0xff
+                    if ((info ushr 4) == STB_GLOBAL) {
+                        bytes[infoOffset] = ((STB_WEAK shl 4) or (info and 0x0f)).toByte()
+                        changed = true
+                    }
+                }
+            }
+        }
+        if (changed) objectFile.writeBytes(bytes)
+    }
+
+    private fun Long.checkedOffset(label: String, objectFile: File): Int {
+        if (this < 0 || this > Int.MAX_VALUE) {
+            throw GradleException("Invalid ELF64 $label offset in $objectFile")
+        }
+        return toInt()
+    }
+
+    private fun elfString(bytes: ByteArray, start: Int, limit: Int): String {
+        var end = start
+        while (end < limit && bytes[end].toInt() != 0) end++
+        return if (end > start) String(bytes, start, end - start, Charsets.UTF_8) else ""
+    }
+
     private data class LinuxToolchain(
         val clang: File,
         val linker: File,
@@ -320,5 +422,31 @@ internal class LinuxElfRuntimeLoaderBackend(
                     .getOrThrow()
             }
         }
+    }
+
+    private companion object {
+        const val ELF_EI_CLASS = 4
+        const val ELF_EI_DATA = 5
+        const val ELFCLASS64 = 2
+        const val ELFDATA2LSB = 1
+        const val ELF64_HEADER_SIZE = 64
+        const val ELF64_SECTION_HEADER_SIZE = 64
+        const val ELF64_SYMBOL_SIZE = 24L
+        const val ELF64_E_SHOFF = 40
+        const val ELF64_E_SHENTSIZE = 58
+        const val ELF64_E_SHNUM = 60
+        const val ELF64_SH_TYPE = 4
+        const val ELF64_SH_OFFSET = 24
+        const val ELF64_SH_SIZE = 32
+        const val ELF64_SH_LINK = 40
+        const val ELF64_SH_ENTSIZE = 56
+        const val ELF64_ST_NAME = 0
+        const val ELF64_ST_INFO = 4
+        const val ELF64_ST_OTHER = 5
+        const val SHT_SYMTAB = 2
+        const val SHT_DYNSYM = 11
+        const val STB_GLOBAL = 1
+        const val STB_WEAK = 2
+        const val ELF_ST_VISIBILITY_MASK = 0x03
     }
 }

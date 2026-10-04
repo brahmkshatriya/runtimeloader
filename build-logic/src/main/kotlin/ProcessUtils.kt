@@ -131,7 +131,22 @@ private data class PreparedProcessCommand(
 
 private fun prepareProcessCommand(command: List<String>): PreparedProcessCommand {
     require(command.isNotEmpty()) { "Command must not be empty" }
-    if (!isWindowsHost() || !isKotlinNativeBatchCompiler(command.first()) || estimatedCommandLength(command) < 7000) {
+    if (!isWindowsHost()) {
+        return PreparedProcessCommand(platformProcessCommand(command))
+    }
+
+    if (isObjcopy(command.first()) && estimatedCommandLength(command) >= 7000) {
+        val responseFile = File.createTempFile("runtime-loader-objcopy-", ".args")
+        responseFile.writeText(
+            command.drop(1).joinToString("\r\n", postfix = "\r\n", transform = ::responseFileArgument)
+        )
+        return PreparedProcessCommand(
+            command = listOf(command.first(), "@${responseFile.absolutePath}"),
+            responseFile = responseFile,
+        )
+    }
+
+    if (!isKotlinNativeBatchCompiler(command.first()) || estimatedCommandLength(command) < 7000) {
         return PreparedProcessCommand(platformProcessCommand(command))
     }
 
@@ -140,7 +155,7 @@ private fun prepareProcessCommand(command: List<String>): PreparedProcessCommand
     // Kotlin/Native supports @argfile expansion itself, so keep the batch invocation short.
     val responseFile = File.createTempFile("runtime-loader-konanc-", ".args")
     responseFile.writeText(
-        command.drop(1).joinToString("\r\n", postfix = "\r\n", transform = ::kotlinCompilerResponseArgument)
+        command.drop(1).joinToString("\r\n", postfix = "\r\n", transform = ::responseFileArgument)
     )
     return PreparedProcessCommand(
         command = platformProcessCommand(listOf(command.first(), "@${responseFile.absolutePath}")),
@@ -154,10 +169,15 @@ private fun isKotlinNativeBatchCompiler(path: String): Boolean {
     return file.nameWithoutExtension.startsWith("kotlinc-native", ignoreCase = true)
 }
 
+private fun isObjcopy(path: String): Boolean {
+    val name = File(path).nameWithoutExtension.lowercase()
+    return name == "objcopy" || name == "llvm-objcopy"
+}
+
 private fun estimatedCommandLength(command: List<String>): Int =
     command.sumOf { it.length + 3 }
 
-private fun kotlinCompilerResponseArgument(value: String): String =
+private fun responseFileArgument(value: String): String =
     if (value.none(Char::isWhitespace) && '"' !in value) value
     else "\"${value.replace("\"", "\\\"")}\""
 
