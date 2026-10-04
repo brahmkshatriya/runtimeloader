@@ -140,6 +140,10 @@ class RuntimeLoaderHostPlugin : Plugin<Project> {
 
             val hostWasmSync = project.tasks.findByName("wasmJsDevelopmentExecutableCompileSync")
             if (hostWasmSync != null && extension.wasmModuleRunner.isPresent) {
+                val wasmNpmInstall = project.rootProject.tasks.findByName("kotlinWasmNpmInstall")
+                    ?: throw GradleException(
+                        "WasmJs host ${project.path} requires the root kotlinWasmNpmInstall task"
+                    )
                 val hostModuleName = project.rootProject.name + project.path.replace(':', '-')
                 specs.forEach { spec ->
                     val suffix = spec.id.toTaskSuffix()
@@ -177,7 +181,7 @@ class RuntimeLoaderHostPlugin : Plugin<Project> {
                     ) {
                         group = "distribution"
                         description = "Build a browser distribution for runtime-loader module '${spec.id}'."
-                        dependsOn(hostWasmSync, moduleWasmSync)
+                        dependsOn(hostWasmSync, moduleWasmSync, wasmNpmInstall)
                         hostPackageDirectory.set(
                             project.rootProject.layout.buildDirectory.dir(
                                 "wasm/packages/$hostModuleName/kotlin"
