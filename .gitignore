@@ -1,0 +1,10 @@
+
+**/build/
+.DS_Store
+.gradle/
+.kotlin/
+local.properties
+*.log
+*.mobileprovision
+*.p12
+__pycache__/
