@@ -233,7 +233,7 @@ versions can explicitly select one with `-PruntimeLoader.composeNativeVersion=<v
 
 ## Maven Local consumption
 
-The current release version is `0.1.0-alpha02`. Publish both the KMP library and reusable Gradle
+The current release version is `0.1.0-alpha03`. Publish both the KMP library and reusable Gradle
 plugins to Maven Local with:
 
 ```bash
@@ -265,12 +265,12 @@ dependencyResolutionManagement {
 ```kotlin
 // build.gradle.kts
 plugins {
-    id("dev.brahmkshatriya.runtime-loader.host") version "0.1.0-alpha02"
+    id("dev.brahmkshatriya.runtime-loader.host") version "0.1.0-alpha03"
 }
 
 kotlin {
     sourceSets.commonMain.dependencies {
-        implementation("dev.brahmkshatriya.runtimeloader:runtime-loader:0.1.0-alpha02")
+        implementation("dev.brahmkshatriya.runtimeloader:runtime-loader:0.1.0-alpha03")
     }
 }
 ```
@@ -278,12 +278,12 @@ kotlin {
 The root KMP coordinate is:
 
 ```text
-dev.brahmkshatriya.runtimeloader:runtime-loader:0.1.0-alpha02
+dev.brahmkshatriya.runtimeloader:runtime-loader:0.1.0-alpha03
 ```
 
 Gradle module metadata selects the Android/JVM/Wasm/Linux/Windows/macOS/iOS platform publication.
 The reusable plugin implementation is published as
-`dev.brahmkshatriya.runtimeloader:runtime-loader-gradle-plugin:0.1.0-alpha02`; normal consumers
+`dev.brahmkshatriya.runtimeloader:runtime-loader-gradle-plugin:0.1.0-alpha03`; normal consumers
 should use the plugin IDs rather than depending on that implementation artifact directly.
 
 ## Release publication

@@ -2,6 +2,8 @@ name: Publish Runtime Loader
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v[0-9]*'
       - '[0-9]*'
@@ -15,24 +17,19 @@ permissions:
 
 jobs:
   prepare:
-    name: Validate release tag
+    name: Validate release metadata
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - name: Validate tag against release metadata
+      - name: Validate release metadata
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-            echo "Tag must be a Maven version such as 0.1.0-alpha01 or v0.1.0-alpha01" >&2
-            exit 1
-          fi
-
           configured_version="$(
             sed -n 's/^version=//p' gradle/runtime-loader-release.properties | tail -n1 | tr -d '\r'
           )"
@@ -40,9 +37,20 @@ jobs:
             echo "gradle/runtime-loader-release.properties does not define version" >&2
             exit 1
           fi
-          if [[ "$version" != "$configured_version" ]]; then
-            echo "Release tag version '$version' does not match configured version '$configured_version'" >&2
-            exit 1
+
+          release=false
+          version="$configured_version"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            release=true
+            version="${GITHUB_REF_NAME#v}"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "Tag must be a Maven version such as 0.1.0-alpha01 or v0.1.0-alpha01" >&2
+              exit 1
+            fi
+            if [[ "$version" != "$configured_version" ]]; then
+              echo "Release tag version '$version' does not match configured version '$configured_version'" >&2
+              exit 1
+            fi
           fi
 
           changelog_heading="## $version"
@@ -52,6 +60,7 @@ jobs:
           fi
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
 
   linux:
     name: Validate Linux, JVM, Wasm, Android
@@ -85,16 +94,26 @@ jobs:
             libdbus-1-dev \
             libfontconfig1-dev \
             libfreetype-dev \
+            libdrm-dev \
+            libegl1-mesa-dev \
+            libgbm-dev \
             libgl-dev \
+            libgl1-mesa-dev \
+            libgles2-mesa-dev \
+            libibus-1.0-dev \
             libpng-dev \
+            libudev-dev \
             libwayland-dev \
             libx11-dev \
             libxcursor-dev \
             libxext-dev \
+            libxfixes-dev \
             libxi-dev \
             libxkbcommon-dev \
             libxrandr-dev \
+            libxrender-dev \
             libxss-dev \
+            libxtst-dev \
             ninja-build \
             pkg-config \
             wayland-protocols \
@@ -138,7 +157,7 @@ jobs:
             :demo:apps:ios:compileKotlinIosArm64 \
             :demo:store:packageExternalExtensionStore
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: failure()
         name: Preserve Linux validation reports
         with:
@@ -214,10 +233,9 @@ jobs:
           mkdir -p "$mountpoint" "$framework_dir"
           hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mountpoint"
           trap 'hdiutil detach "$mountpoint" >/dev/null 2>&1 || true' EXIT
-          sdl_framework="$mountpoint/SDL3.xcframework/macos-arm64_x86_64/SDL3.framework"
-          if [[ ! -d "$sdl_framework" ]]; then
-            sdl_framework="$(find "$mountpoint/SDL3.xcframework" -type d -path '*/macos-*/SDL3.framework' -print -quit 2>/dev/null || true)"
-          fi
+          sdl_framework="$(
+            find -L "$mountpoint" -type d -name SDL3.framework -path '*macos*' -print -quit 2>/dev/null || true
+          )"
           if [[ -z "$sdl_framework" || ! -d "$sdl_framework" ]]; then
             echo "The macOS SDL3.framework slice was not found inside the SDL release DMG" >&2
             find "$mountpoint" -maxdepth 4 -print >&2
@@ -257,6 +275,7 @@ jobs:
 
   publish:
     name: Publish Maven Central and Gradle Plugin Portal
+    if: needs.prepare.outputs.release == 'true'
     needs:
       - prepare
       - linux

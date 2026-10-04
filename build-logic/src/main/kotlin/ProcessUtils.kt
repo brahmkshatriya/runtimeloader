@@ -17,7 +17,8 @@ internal fun runCommand(
     capture: Boolean = false,
     check: Boolean = true,
 ): CommandResult {
-    val builder = ProcessBuilder(command)
+    val processCommand = platformProcessCommand(command)
+    val builder = ProcessBuilder(processCommand)
     if (cwd != null) builder.directory(cwd)
     builder.redirectErrorStream(true)
     val environment = builder.environment()
@@ -52,7 +53,8 @@ internal fun runCommandWithTimeout(
     command: List<String>,
     timeoutSeconds: Double,
 ): TimedCommandResult {
-    val builder = ProcessBuilder(command).redirectErrorStream(true)
+    val processCommand = platformProcessCommand(command)
+    val builder = ProcessBuilder(processCommand).redirectErrorStream(true)
     val environment = builder.environment()
     val javaHome = System.getProperty("java.home")
     environment["JAVA_HOME"] = javaHome
@@ -85,3 +87,41 @@ internal fun requireTool(name: String): String {
         .firstOrNull { it.isFile && (it.canExecute() || System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) }
     return path?.absolutePath ?: throw GradleException("Required tool is not on PATH: $name")
 }
+
+
+internal fun resolveKonanTool(konanHome: File, name: String): File {
+    val bin = File(konanHome, "bin")
+    val windows = isWindowsHost()
+    val candidates = if (windows) {
+        listOf("$name.bat", "$name.cmd", "$name.exe", name)
+    } else {
+        listOf(name)
+    }
+    return candidates.asSequence()
+        .map { File(bin, it) }
+        .firstOrNull(File::isFile)
+        ?: throw GradleException(
+            "Kotlin/Native tool '$name' is missing under ${bin.absolutePath}; tried ${candidates.joinToString()}"
+        )
+}
+
+private fun platformProcessCommand(command: List<String>): List<String> {
+    require(command.isNotEmpty()) { "Command must not be empty" }
+    if (!isWindowsHost()) return command
+    val extension = File(command.first()).extension.lowercase()
+    if (extension !in setOf("bat", "cmd")) return command
+
+    // Java ProcessBuilder ultimately calls CreateProcess on Windows, which cannot execute .bat/.cmd
+    // launchers directly. Kotlin/Native ships tools such as klib and kotlinc-native as batch
+    // wrappers, so route those commands through the system command processor while retaining each
+    // original argument as a quoted token. The outer quotes are required by `cmd /s /c` when the
+    // executable path itself is quoted.
+    val commandLine = command.joinToString(" ") { windowsCmdQuote(it) }
+    return listOf("cmd.exe", "/d", "/s", "/c", "\"$commandLine\"")
+}
+
+private fun windowsCmdQuote(value: String): String =
+    "\"" + value.replace("%", "%%").replace("\"", "\"\"") + "\""
+
+private fun isWindowsHost(): Boolean =
+    System.getProperty("os.name").startsWith("Windows", ignoreCase = true)

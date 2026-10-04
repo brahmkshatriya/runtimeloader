@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.0-alpha03
+
+Release-CI portability follow-up.
+
+- Execute Kotlin/Native `.bat`/`.cmd` tool launchers through `cmd.exe` on Windows, including `klib`
+  inspection and Runtime Loader's patched `kotlinc-native` wrapper.
+- Validate the full Linux/Windows/macOS platform matrix on pushes to `main`; Maven Central and the
+  Gradle Plugin Portal remain tag-only publication steps.
+- Install the remaining SDL3 X11 development dependencies required by Ubuntu runners and make the
+  macOS SDL framework lookup tolerant of the official DMG/XCFramework layout.
+- Update failed-run artifact upload to the current GitHub Actions runtime.
+
 ## 0.1.0-alpha02
 
 Release-CI portability fixes after the unpublished `0.1.0-alpha01` validation run.

@@ -45,7 +45,7 @@ internal class NativeRuntimeLoaderPipeline(
             compilerJar = patched.compilerJar
             log("using Runtime Loader's isolated MinGW cache-enabled Kotlin/Native compiler patch")
         } else {
-            konanc = File(konanHome, "bin/kotlinc-native")
+            konanc = resolveKonanTool(konanHome, "kotlinc-native")
             compilerJar = File(konanHome, "konan/lib/kotlin-native-compiler-embeddable.jar")
         }
         inspector = KlibInspector(konanHome)
@@ -301,7 +301,7 @@ internal class NativeRuntimeLoaderPipeline(
     }
 
     private inner class KlibInspector(private val home: File) {
-        private val klibTool = File(home, "bin/klib")
+        private val klibTool = resolveKonanTool(home, "klib")
         private val cache = mutableMapOf<File, Klib>()
 
         fun info(path: File): Klib {
