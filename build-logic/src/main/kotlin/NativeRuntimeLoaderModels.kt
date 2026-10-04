@@ -34,8 +34,11 @@ internal data class NativeRuntimeLoaderOutputs(
     val modules: List<ModuleBuildArtifact>,
 )
 
-internal fun cacheDir(root: File, uniqueName: String): File =
-    File(root, "$uniqueName-cache")
+internal fun cacheDir(root: File, uniqueName: String, target: String? = null): File {
+    val cacheName = "$uniqueName-cache"
+    val platformName = if (target == "mingw_x64") cacheName.replace(':', '_') else cacheName
+    return File(root, platformName)
+}
 
-internal fun cacheArchive(root: File, uniqueName: String): File? =
-    File(cacheDir(root, uniqueName), "bin").listFiles()?.firstOrNull { it.extension == "a" }
+internal fun cacheArchive(root: File, uniqueName: String, target: String? = null): File? =
+    File(cacheDir(root, uniqueName, target), "bin").listFiles()?.firstOrNull { it.extension == "a" }

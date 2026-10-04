@@ -377,7 +377,11 @@ internal class AppleMachORuntimeLoaderBackend(
 
     private fun archiveMembers(archive: File): List<String> =
         runCommand(xcrun("ar", "t", archive.absolutePath), capture = true)
-            .output.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
+            .output.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .filterNot { it.startsWith("__.SYMDEF") }
+            .toList()
 
     private fun rebuildArchive(archive: File, directory: File, members: List<String>) {
         archive.delete()

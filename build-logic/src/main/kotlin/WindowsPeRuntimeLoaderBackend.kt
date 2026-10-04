@@ -161,7 +161,7 @@ internal class WindowsPeRuntimeLoaderBackend(
         val nativeLibraries = resolved.graph.keys.filter(::isNativeInteropCache).toSet()
         val cachedArchives = resolved.graph.keys
             .filterNot { it in nativeLibraries }
-            .mapNotNull { cacheArchive(staticCache, it) }
+            .mapNotNull { cacheArchive(staticCache, it, target) }
         val cachedDefinitions = cachedArchives.flatMapTo(linkedSetOf(), ::definedSymbols)
         val requested = linkedSetOf<String>()
         (cachedArchives + moduleLibraries).forEach { requested += undefinedSymbols(it) }
@@ -173,7 +173,7 @@ internal class WindowsPeRuntimeLoaderBackend(
         var abiSymbols = 0
         var keptSections = 0
         nativeLibraries.forEach { name ->
-            val archive = cacheArchive(staticCache, name) ?: return@forEach
+            val archive = cacheArchive(staticCache, name, target) ?: return@forEach
             val objectInfo = parseArchive(name, archive)
             try {
                 val seeds = requestedCacheAbiSymbols.filter { it in objectInfo.symbolSections }
@@ -277,7 +277,7 @@ internal class WindowsPeRuntimeLoaderBackend(
             val linkLibrary = sanitizedHostLibrary(hybridCache, name, item.path)
             command += listOf("-library", linkLibrary.absolutePath)
             if (!isNativeInteropCache(name)) {
-                command += "-Xcached-library=${item.path.absolutePath},${cacheDir(hybridCache, name).absolutePath}"
+                command += "-Xcached-library=${item.path.absolutePath},${cacheDir(hybridCache, name, target).absolutePath}"
             }
         }
         supportObjects.forEach { objectFile ->
@@ -297,7 +297,7 @@ internal class WindowsPeRuntimeLoaderBackend(
         val hostDefinitionKinds = definedSymbolKinds(output).toMutableMap()
         order.asSequence()
             .filterNot(::isNativeInteropCache)
-            .mapNotNull { name -> cacheArchive(hybridCache, name) }
+            .mapNotNull { name -> cacheArchive(hybridCache, name, target) }
             .forEach { archive ->
                 definedSymbolKinds(archive).forEach { (symbol, kind) ->
                     hostDefinitionKinds.putIfAbsent(symbol, kind)
@@ -636,7 +636,7 @@ internal class WindowsPeRuntimeLoaderBackend(
         log: (String) -> Unit,
     ) {
         val skikoName = libraryNames.firstOrNull { it == "dev.brahmkshatriya.skiko:skiko" } ?: return
-        val archive = cacheArchive(hybridCache, skikoName) ?: return
+        val archive = cacheArchive(hybridCache, skikoName, target) ?: return
         val collisions = setOf(
             "atexit",
             "_FindPESection",

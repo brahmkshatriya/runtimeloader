@@ -237,7 +237,7 @@ internal class NativeRuntimeLoaderPipeline(
     private fun dependencyFingerprint(graph: Map<String, Klib>): String = sha256Text(
         buildString {
             graph.toSortedMap().forEach { (name, klib) ->
-                val archive = cacheArchive(staticCache, name)
+                val archive = cacheArchive(staticCache, name, target)
                     ?: throw GradleException("Host cache is missing while fingerprinting: $name")
                 append(name)
                 append('=')
@@ -506,7 +506,7 @@ internal class NativeRuntimeLoaderPipeline(
             val name = key.removePrefix("library.")
             val newPath = resolved.graph[name]?.path?.absolutePath
             if (newPath != old.getProperty(key)) {
-                cacheDir(staticCache, name).deleteRecursively()
+                cacheDir(staticCache, name, target).deleteRecursively()
                 invalidated += name
             }
         }
@@ -529,8 +529,8 @@ internal class NativeRuntimeLoaderPipeline(
     }.getOrDefault(false)
 
     private fun isCompleteCache(name: String): Boolean {
-        val directory = cacheDir(staticCache, name)
-        if (cacheArchive(staticCache, name) == null) return false
+        val directory = cacheDir(staticCache, name, target)
+        if (cacheArchive(staticCache, name, target) == null) return false
         return listOf(
             "metadata.properties",
             "bin/bitcode_deps",
@@ -554,7 +554,7 @@ internal class NativeRuntimeLoaderPipeline(
             }
 
             log("cache ${"%02d".format(index + 1)}/${order.size} build $name")
-            cacheDir(staticCache, name).deleteRecursively()
+            cacheDir(staticCache, name, target).deleteRecursively()
             val command = mutableListOf(
                 konanc.absolutePath,
                 "-target", target,
@@ -565,7 +565,7 @@ internal class NativeRuntimeLoaderPipeline(
             )
             transitiveDependencies(name, graph).sortedBy { rank.getValue(it) }.forEach { dependency ->
                 val dep = graph.getValue(dependency)
-                val depCache = cacheDir(staticCache, dependency)
+                val depCache = cacheDir(staticCache, dependency, target)
                 if (!isCompleteCache(dependency)) {
                     throw GradleException("Dependency cache is missing: $dependency")
                 }
@@ -588,7 +588,7 @@ internal class NativeRuntimeLoaderPipeline(
         order: List<String>,
     ): Pair<Klib, File> {
         val module = inspector.info(moduleKlib)
-        cacheDir(staticCache, module.name).deleteRecursively()
+        cacheDir(staticCache, module.name, target).deleteRecursively()
         val command = mutableListOf(
             konanc.absolutePath,
             "-target", target,
@@ -601,12 +601,12 @@ internal class NativeRuntimeLoaderPipeline(
             val item = graph.getValue(name)
             command += listOf(
                 "-library", item.path.absolutePath,
-                "-Xcached-library=${item.path.absolutePath},${cacheDir(staticCache, name).absolutePath}",
+                "-Xcached-library=${item.path.absolutePath},${cacheDir(staticCache, name, target).absolutePath}",
             )
         }
         log("building module '${module.name}' as a separately compiled Kotlin/Native cache")
         runCommand(command)
-        val archive = cacheArchive(staticCache, module.name)
+        val archive = cacheArchive(staticCache, module.name, target)
             ?: throw GradleException("Module static cache was not produced: ${module.name}")
         return module to archive
     }

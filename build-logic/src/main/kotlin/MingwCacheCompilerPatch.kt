@@ -5,6 +5,7 @@ import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
 import org.objectweb.asm.tree.FieldInsnNode
+import org.objectweb.asm.tree.IntInsnNode
 import org.objectweb.asm.tree.InsnNode
 import org.objectweb.asm.tree.JumpInsnNode
 import org.objectweb.asm.tree.MethodInsnNode
@@ -17,6 +18,8 @@ import java.util.jar.JarOutputStream
 
 private const val CACHED_LIBRARIES_CLASS =
     "org/jetbrains/kotlin/backend/konan/CachedLibraries.class"
+private const val CACHED_LIBRARIES_COMPANION_CLASS =
+    "org/jetbrains/kotlin/backend/konan/CachedLibraries${'$'}Companion.class"
 private const val CACHE_SUPPORT_CLASS =
     "org/jetbrains/kotlin/backend/konan/CacheSupport.class"
 private const val CACHED_DEPENDENCIES_COMPUTER_CLASS =
@@ -81,13 +84,14 @@ internal data class PatchedKonanCompiler(
 )
 
 private fun patchCompilerJar(source: File, output: File) {
-    val sourceStamp = "v7:${source.length()}:${source.lastModified()}"
+    val sourceStamp = "v9:${source.length()}:${source.lastModified()}"
     val stampFile = File(output.parentFile, "source.stamp")
     if (output.isFile && stampFile.readTextOrNull() == sourceStamp) return
 
     val temporary = File(output.parentFile, output.name + ".tmp")
     temporary.delete()
     var patchedCachedLibraries = false
+    var patchedCachedLibrariesCompanion = false
     var patchedCacheSupport = false
     var patchedCachedDependencies = false
     var patchedCacheBinariesResolver = false
@@ -112,6 +116,10 @@ private fun patchCompilerJar(source: File, output: File) {
                         result.write(patchCachedLibraries(bytes))
                         patchedCachedLibraries = true
                     }
+                    CACHED_LIBRARIES_COMPANION_CLASS -> {
+                        result.write(patchCachedLibrariesCompanion(bytes))
+                        patchedCachedLibrariesCompanion = true
+                    }
                     CACHE_SUPPORT_CLASS -> {
                         result.write(patchCacheSupport(bytes))
                         patchedCacheSupport = true
@@ -130,11 +138,14 @@ private fun patchCompilerJar(source: File, output: File) {
             }
         }
     }
-    if (!patchedCachedLibraries || !patchedCacheSupport || !patchedCachedDependencies || !patchedCacheBinariesResolver) {
+    if (!patchedCachedLibraries || !patchedCachedLibrariesCompanion || !patchedCacheSupport ||
+        !patchedCachedDependencies || !patchedCacheBinariesResolver) {
         temporary.delete()
         throw GradleException(
             "Could not patch Kotlin/Native MinGW cache internals: " +
-                "CachedLibraries=$patchedCachedLibraries CacheSupport=$patchedCacheSupport " +
+                "CachedLibraries=$patchedCachedLibraries " +
+                "CachedLibrariesCompanion=$patchedCachedLibrariesCompanion " +
+                "CacheSupport=$patchedCacheSupport " +
                 "CachedDependencies=$patchedCachedDependencies CacheBinariesResolver=$patchedCacheBinariesResolver"
         )
     }
@@ -304,6 +315,41 @@ private fun patchCacheSupport(bytes: ByteArray): ByteArray {
     method.tryCatchBlocks.clear()
     method.localVariables?.clear()
     method.instructions.add(InsnNode(Opcodes.RETURN))
+    val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+    node.accept(writer)
+    return writer.toByteArray()
+}
+
+private fun patchCachedLibrariesCompanion(bytes: ByteArray): ByteArray {
+    val node = ClassNode()
+    ClassReader(bytes).accept(node, 0)
+    val method = node.methods.singleOrNull {
+        it.name == "getCachedLibraryName" &&
+            it.desc == "(Ljava/lang/String;)Ljava/lang/String;"
+    } ?: throw GradleException(
+        "Expected exactly one CachedLibraries.Companion.getCachedLibraryName(String). " +
+            "The compiler internals changed and Runtime Loader must be updated."
+    )
+    val returns = method.instructions.toArray().filterIsInstance<InsnNode>()
+        .filter { it.opcode == Opcodes.ARETURN }
+    if (returns.size != 1) {
+        throw GradleException(
+            "Expected one return in CachedLibraries.Companion.getCachedLibraryName(String), found ${returns.size}."
+        )
+    }
+    val returnInstruction = returns.single()
+    method.instructions.insertBefore(returnInstruction, IntInsnNode(Opcodes.BIPUSH, ':'.code))
+    method.instructions.insertBefore(returnInstruction, IntInsnNode(Opcodes.BIPUSH, '_'.code))
+    method.instructions.insertBefore(
+        returnInstruction,
+        MethodInsnNode(
+            Opcodes.INVOKEVIRTUAL,
+            "java/lang/String",
+            "replace",
+            "(CC)Ljava/lang/String;",
+            false,
+        )
+    )
     val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
     node.accept(writer)
     return writer.toByteArray()

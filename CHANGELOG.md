@@ -11,6 +11,12 @@ Release-CI portability follow-up.
 - Install the remaining SDL3 X11 development dependencies required by Ubuntu runners and make the
   macOS SDL framework lookup tolerant of the official DMG/XCFramework layout.
 - Update failed-run artifact upload to the current GitHub Actions runtime.
+- Fall back to GNU `objcopy` for Linux Native cache symbol rewriting when `llvm-objcopy` is not on
+  the host `PATH`, including isolated published-consumer validation.
+- Normalize MinGW static-cache directory names so Maven KLIB identities containing `:` build on
+  native Windows filesystems as well as cross-build hosts.
+- Ignore Apple archive symbol-table pseudo-members such as `__.SYMDEF SORTED` when rebuilding
+  patched Kotlin/Native caches with Xcode `ar`.
 
 ## 0.1.0-alpha02
 
