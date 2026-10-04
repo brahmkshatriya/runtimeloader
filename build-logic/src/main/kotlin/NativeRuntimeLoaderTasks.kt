@@ -40,6 +40,9 @@ abstract class BuildNativeRuntimeLoaderTask : DefaultTask() {
     abstract val moduleDescriptors: ListProperty<String>
 
     @get:Input
+    abstract val nativeDependencyVersionEvidence: ListProperty<String>
+
+    @get:Input
     abstract val target: Property<String>
 
     @get:Input
@@ -75,6 +78,12 @@ abstract class BuildNativeRuntimeLoaderTask : DefaultTask() {
             if (parts.size != 3) throw GradleException("Invalid internal runtime-loader module descriptor: $encoded")
             ModuleBuildInput(parts[0], File(parts[1]), parts[2])
         }
+        val requestedVersions = linkedMapOf<String, MutableSet<String>>()
+        nativeDependencyVersionEvidence.get().forEach { encoded ->
+            val parts = encoded.split('\t')
+            if (parts.size != 2) throw GradleException("Invalid internal Native dependency version evidence: $encoded")
+            requestedVersions.getOrPut(parts[0]) { linkedSetOf() }.add(parts[1])
+        }
         val pipeline = NativeRuntimeLoaderPipeline(
             rootDirectory = rootDirectory.get().asFile,
             workDirectory = workDirectory.get().asFile,
@@ -87,6 +96,7 @@ abstract class BuildNativeRuntimeLoaderTask : DefaultTask() {
             executableName = executableName.get(),
             linkDirectories = nativeLinkDirectories.get().map(::File),
             linkerOptions = nativeLinkerOptions.get(),
+            resolvedVersionEvidence = requestedVersions,
             resolveMissingKlibs = ::resolveMissingNativeKlibs,
             log = { logger.lifecycle("[runtime-loader] $it") },
         )
@@ -149,13 +159,28 @@ abstract class SmokeNativeRuntimeLoaderTask : DefaultTask() {
     @get:Internal abstract val executable: RegularFileProperty
     @get:Internal abstract val sharedLibrary: RegularFileProperty
     @get:Input abstract val arguments: ListProperty<String>
+    @get:Input abstract val timeoutSeconds: Property<Double>
 
     @TaskAction
     fun smoke() {
         logger.lifecycle("[runtime-loader] smoke ${sharedLibrary.get().asFile.name}")
-        runCommand(
-            listOf(executable.get().asFile.absolutePath, sharedLibrary.get().asFile.absolutePath) + arguments.get()
-        )
+        val command = listOf(executable.get().asFile.absolutePath, sharedLibrary.get().asFile.absolutePath) + arguments.get()
+        val result = runCommandWithTimeout(command, timeoutSeconds.get())
+        if (!result.finished) {
+            throw GradleException(
+                "Runtime Loader smoke process did not exit within ${timeoutSeconds.get()}s: " +
+                    executable.get().asFile.absolutePath +
+                    if (result.output.isNotBlank()) "\n${result.output}" else ""
+            )
+        }
+        if (result.exitCode != 0) {
+            throw GradleException(
+                "Runtime Loader smoke process failed (${result.exitCode}): " +
+                    executable.get().asFile.absolutePath +
+                    if (result.output.isNotBlank()) "\n${result.output}" else ""
+            )
+        }
+        if (result.output.isNotBlank()) print(result.output)
     }
 }
 

@@ -13,6 +13,7 @@ runtimeLoaderHost {
 kotlin {
     jvm()
     linuxX64()
+    linuxArm64()
     mingwX64()
 
     sourceSets.commonMain.dependencies {

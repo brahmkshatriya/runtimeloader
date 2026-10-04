@@ -10,7 +10,8 @@ on:
 
 concurrency:
   group: publish-runtime-loader-${{ github.ref }}
-  cancel-in-progress: false
+  # A newer main commit supersedes older validation, but a release tag must run to completion.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: read
@@ -305,11 +306,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
-  linux-arm64:
-    name: Validate Linux arm64
+  linux-arm64-build:
+    name: Build Linux arm64 runtime fixture
     needs: prepare
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -321,88 +322,64 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
+      - name: Cross-build Linux arm64 runtime-loader fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "x86_64"
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :fixture:host:runtimeLoaderNativeBuildLinuxArm64
+          file fixture/host/build/runtime-loader/linuxArm64/out/app.kexe | grep -Eq 'ARM aarch64|ARM64|aarch64'
+          file fixture/host/build/runtime-loader/linuxArm64/out/libruntime-loader-module.so | grep -Eq 'ARM aarch64|ARM64|aarch64'
+
+      - uses: actions/upload-artifact@v7.0.1
+        name: Upload Linux arm64 runtime fixture
+        with:
+          name: runtime-loader-linux-arm64-fixture-${{ needs.prepare.outputs.version }}
+          path: fixture/host/build/runtime-loader/linuxArm64/out
+          if-no-files-found: error
+          retention-days: 5
+
+      - uses: actions/upload-artifact@v7.0.1
+        if: failure()
+        name: Preserve Linux arm64 build reports
+        with:
+          name: runtime-loader-linux-arm64-build-reports-${{ needs.prepare.outputs.version }}
+          path: build/reports
+          if-no-files-found: ignore
+          retention-days: 5
+
+  linux-arm64:
+    name: Validate Linux arm64
+    needs:
+      - prepare
+      - linux-arm64-build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
       - name: Verify Linux arm64 runner
         shell: bash
         run: |
           set -euo pipefail
           test "$(uname -m)" = "aarch64"
 
-      - name: Install Linux desktop dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential \
-            cmake \
-            libdbus-1-dev \
-            libfontconfig1-dev \
-            libfreetype-dev \
-            libdrm-dev \
-            libegl1-mesa-dev \
-            libgbm-dev \
-            libgl-dev \
-            libgl1-mesa-dev \
-            libgles2-mesa-dev \
-            libibus-1.0-dev \
-            libpng-dev \
-            libudev-dev \
-            libwayland-dev \
-            libx11-dev \
-            libxcursor-dev \
-            libxext-dev \
-            libxfixes-dev \
-            libxi-dev \
-            libxkbcommon-dev \
-            libxrandr-dev \
-            libxrender-dev \
-            libxss-dev \
-            libxtst-dev \
-            ninja-build \
-            pkg-config \
-            wayland-protocols \
-            xauth \
-            xvfb \
-            zlib1g-dev
-
-          sdl_archive="$RUNNER_TEMP/SDL3-3.4.10.tar.gz"
-          curl --fail --location --silent --show-error \
-            --output "$sdl_archive" \
-            https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
-          echo '12b34280415ec8418c864408b93d008a20a6530687ee613d60bfbd20411f2785  '"$sdl_archive" | sha256sum --check
-          tar --extract --gzip --file "$sdl_archive" --directory "$RUNNER_TEMP"
-          cmake \
-            -S "$RUNNER_TEMP/SDL3-3.4.10" \
-            -B "$RUNNER_TEMP/SDL3-build" \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=/usr \
-            -DSDL_SHARED=ON \
-            -DSDL_STATIC=OFF \
-            -DSDL_TEST_LIBRARY=OFF \
-            -DSDL_TESTS=OFF
-          cmake --build "$RUNNER_TEMP/SDL3-build" --parallel 2
-          sudo cmake --install "$RUNNER_TEMP/SDL3-build"
-          sudo ldconfig
-
-      - name: Run Linux arm64 runtime-loader integration tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          xvfb-run --auto-servernum ./gradlew \
-            --no-daemon \
-            --stacktrace \
-            :runtime-loader:compileKotlinLinuxArm64 \
-            :demo:apps:linuxArm64:runtimeLoaderNativeIntegrationTest
-
-      - uses: actions/upload-artifact@v7.0.1
-        if: failure()
-        name: Preserve Linux arm64 validation reports
+      - uses: actions/download-artifact@v8
+        name: Download Linux arm64 runtime fixture
         with:
-          name: runtime-loader-linux-arm64-reports-${{ needs.prepare.outputs.version }}
-          path: build/reports
-          if-no-files-found: ignore
-          retention-days: 5
+          name: runtime-loader-linux-arm64-fixture-${{ needs.prepare.outputs.version }}
+          path: runtime-loader-linux-arm64-fixture
+
+      - name: Run Linux arm64 runtime-loader integration test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd runtime-loader-linux-arm64-fixture
+          chmod +x app.kexe
+          file app.kexe | grep -Eq 'ARM aarch64|ARM64|aarch64'
+          file libruntime-loader-module.so | grep -Eq 'ARM aarch64|ARM64|aarch64'
+          ./app.kexe ./libruntime-loader-module.so
 
   extension-store:
     name: Validate extension store packaging

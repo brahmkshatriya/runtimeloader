@@ -1,6 +1,5 @@
 package dev.brahmkshatriya.runtimeloader.gradle
 
-import groovy.json.JsonSlurper
 import org.gradle.api.GradleException
 import java.io.File
 import java.security.MessageDigest
@@ -18,6 +17,7 @@ internal class NativeRuntimeLoaderPipeline(
     private val executableName: String,
     private val linkDirectories: List<File>,
     private val linkerOptions: List<String>,
+    private val resolvedVersionEvidence: Map<String, Set<String>>,
     private val resolveMissingKlibs: (String, Set<String>) -> List<File>,
     private val log: (String) -> Unit,
 ) {
@@ -336,39 +336,6 @@ internal class NativeRuntimeLoaderPipeline(
         throw GradleException("Could not locate Gradle's modules-2/files-2.1 cache")
     }
 
-    private fun moduleVersionEvidence(paths: Collection<File>): Map<String, Set<String>> {
-        val versions = linkedMapOf<String, MutableSet<String>>()
-        val seen = mutableSetOf<File>()
-        paths.forEach { path ->
-            if (!path.isFile || "modules-2/files-2.1" !in path.invariantSeparatorsPath) return@forEach
-            val versionDir = path.parentFile?.parentFile ?: return@forEach
-            versionDir.walkTopDown().maxDepth(2)
-                .filter { it.isFile && it.extension == "module" }
-                .forEach { moduleFile ->
-                    if (!seen.add(moduleFile)) return@forEach
-                    val data = runCatching { JsonSlurper().parse(moduleFile) as? Map<*, *> }.getOrNull()
-                        ?: return@forEach
-                    val variants = data["variants"] as? List<*> ?: return@forEach
-                    variants.forEach { variantAny ->
-                        val variant = variantAny as? Map<*, *> ?: return@forEach
-                        val dependencies = variant["dependencies"] as? List<*> ?: return@forEach
-                        dependencies.forEach { dependencyAny ->
-                            val dependency = dependencyAny as? Map<*, *> ?: return@forEach
-                            val group = dependency["group"] as? String ?: return@forEach
-                            val module = dependency["module"] as? String ?: return@forEach
-                            val versionData = dependency["version"] as? Map<*, *> ?: return@forEach
-                            val version = sequenceOf("requires", "strictly", "prefers")
-                                .mapNotNull { versionData[it] as? String }
-                                .firstOrNull { it.firstOrNull()?.isDigit() == true }
-                                ?: return@forEach
-                            versions.getOrPut("$group:$module") { linkedSetOf() }.add(version)
-                        }
-                    }
-                }
-        }
-        return versions
-    }
-
     private fun cinteropParentUniqueName(uniqueName: String): String? {
         if (':' !in uniqueName) return null
         val group = uniqueName.substringBefore(':')
@@ -457,7 +424,7 @@ internal class NativeRuntimeLoaderPipeline(
         while (true) {
             val missing = graph.values.flatMap { it.depends }.filterNot { it in graph }.distinct().sorted()
             if (missing.isEmpty()) break
-            val evidence = moduleVersionEvidence(graph.values.map { it.path })
+            val evidence = resolvedVersionEvidence
             var added = false
             missing.forEach { name ->
                 val platformPath = File(konanHome, "klib/platform/$target/$name")
@@ -491,7 +458,7 @@ internal class NativeRuntimeLoaderPipeline(
                 added = true
             }
             if (!added) {
-                val evidence = moduleVersionEvidence(graph.values.map { it.path })
+                val evidence = resolvedVersionEvidence
                 val details = missing.joinToString("; ") { name ->
                     val versions = evidence[name].orEmpty().sortedWith(naturalVersionComparator).joinToString().ifEmpty { "none" }
                     "$name (Gradle versions: $versions)"

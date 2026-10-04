@@ -3,6 +3,7 @@ package dev.brahmkshatriya.runtimeloader.gradle
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.Plugin
+import org.gradle.api.artifacts.component.ModuleComponentSelector
 import org.gradle.api.Project
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.Delete
@@ -305,6 +306,25 @@ class RuntimeLoaderHostPlugin : Plugin<Project> {
                     hostLibraries.from(hostCompile.map { it.libraries })
                     hostKlib.from(hostCompile.flatMap { it.klibDirectory })
                     moduleKlibs.from(moduleCompiles.values.map { it.flatMap { task -> task.klibDirectory } })
+                    nativeDependencyVersionEvidence.set(
+                        project.provider {
+                            val sourceProjects = buildList {
+                                add(project)
+                                specs.mapTo(this) { project.rootProject.project(it.moduleProjectPath) }
+                            }.distinctBy { it.path }
+                            sourceProjects.flatMap { sourceProject ->
+                                val configuration = sourceProject.configurations.getByName("${targetName}CompileKlibraries")
+                                configuration.incoming.resolutionResult.allDependencies.mapNotNull { dependency ->
+                                    val requested = dependency.requested as? ModuleComponentSelector
+                                        ?: return@mapNotNull null
+                                    val version = requested.version.takeIf { value ->
+                                        value.firstOrNull()?.isDigit() == true && '+' !in value && ',' !in value
+                                    } ?: return@mapNotNull null
+                                    "${requested.group}:${requested.module}\t$version"
+                                }
+                            }.distinct().sorted()
+                        }
+                    )
                     target.set(hostCompile.map { it.target })
                     entryPoint.set(extension.entryPoint)
                     executableName.set(outputName)
@@ -416,6 +436,10 @@ class RuntimeLoaderHostPlugin : Plugin<Project> {
                             executable.set(executableFile)
                             sharedLibrary.set(moduleFile)
                             arguments.set(spec.smokeArguments)
+                            // Smoke entry points should terminate immediately. Keep a generous
+                            // floor for slow CI machines, but do not allow a hung native process
+                            // to consume the workflow-level timeout.
+                            timeoutSeconds.set(extension.verifyTimeoutSeconds.map { maxOf(it, 60.0) })
                         }
                         smokeAll.configure { dependsOn(smoke) }
 

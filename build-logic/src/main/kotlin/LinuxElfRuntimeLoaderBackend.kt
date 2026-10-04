@@ -152,8 +152,13 @@ internal class LinuxElfRuntimeLoaderBackend(
                     archiveChanged = true
                 }
                 if (archiveChanged) {
-                    archive.delete()
-                    runCommand(listOf(ar, "rcs", archive.absolutePath) + members, cwd = temp)
+                    // Rebuild the archive inside the extraction directory first. GNU ar may
+                    // create/rename temporary files beside its output, and rebuilding directly
+                    // at the cache destination has proven unreliable when that path lives on a
+                    // different filesystem or is backed by linked cache files.
+                    val rebuilt = File(temp, "runtime-loader-rebuilt.a")
+                    runCommand(listOf(ar, "rcs", rebuilt.absolutePath) + members, cwd = temp)
+                    rebuilt.copyTo(archive, overwrite = true)
                     changedArchives++
                 }
             } finally {
