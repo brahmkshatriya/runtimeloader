@@ -255,8 +255,6 @@ internal class AppleMachORuntimeLoaderBackend(
             cacheArchive(hybridCache, name)?.let(::definedSymbols).orEmpty()
         }
         val requiredExports = (moduleImports intersect hostDefinitions).toSortedSet()
-        val exportList = File(output.parentFile, "${output.name}.runtime-loader.exports")
-        exportList.writeText(requiredExports.joinToString(separator = "\n", postfix = "\n"))
 
         val command = mutableListOf(
             konanc.absolutePath,
@@ -268,9 +266,19 @@ internal class AppleMachORuntimeLoaderBackend(
             "-target", target,
             "-Xmulti-platform",
             "-Xpre-link-caches=disable",
-            "-linker-option", "-Wl,-exported_symbols_list,${exportList.absolutePath}",
             "-output", output.absolutePath,
         )
+        // Kotlin/Native mangled symbol names contain '#'. Apple's exported-symbol list parser
+        // treats lines beginning with '#' as comments and, in practice, also tokenizes these
+        // mangled names at '#', producing bogus initial undefined symbols such as
+        // `_kfun:androidx.compose.runtime`. Pass each export directly to ld instead so the symbol
+        // name remains opaque and the linker also retains it through dead stripping.
+        requiredExports.forEach { symbol ->
+            command += listOf(
+                "-linker-option", "-exported_symbol",
+                "-linker-option", symbol,
+            )
+        }
         appendLinkInputs(command, graph, order, hybridCache, linkDirectories, linkerOptions)
         log("linking macOS/Mach-O host with ${requiredExports.size} module-required process exports")
         runCommand(command)

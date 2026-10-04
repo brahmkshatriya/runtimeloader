@@ -19,7 +19,7 @@ internal class LinuxElfRuntimeLoaderBackend(
     override fun requireTools() {
         requireTool("nm")
         requireTool("ar")
-        objcopyTool()
+        requireTool("llvm-objcopy")
         linuxToolchain()
     }
 
@@ -83,7 +83,7 @@ internal class LinuxElfRuntimeLoaderBackend(
 
     private fun exposeModuleSymbols(archive: File, log: (String) -> Unit) {
         val ar = requireTool("ar")
-        val objcopy = objcopyTool()
+        val objcopy = requireTool("llvm-objcopy")
         val temp = Files.createTempDirectory("runtime-loader-module-").toFile()
         try {
             val members = runCommand(listOf(ar, "t", archive.absolutePath), capture = true)
@@ -117,7 +117,7 @@ internal class LinuxElfRuntimeLoaderBackend(
         moduleLibraries: List<File>,
         log: (String) -> Unit,
     ) {
-        val objcopy = objcopyTool()
+        val objcopy = requireTool("llvm-objcopy")
         val ar = requireTool("ar")
         log("creating Linux/ELF host cache view for ${moduleLibraries.size} module(s)")
         hardlinkCopyTree(staticCache, hybridCache)
@@ -257,10 +257,6 @@ internal class LinuxElfRuntimeLoaderBackend(
             } else null
         }.toSet()
     }
-
-    private fun objcopyTool(): String =
-        runCatching { requireTool("llvm-objcopy") }.getOrElse { requireTool("objcopy") }
-
 
     private data class LinuxToolchain(
         val clang: File,

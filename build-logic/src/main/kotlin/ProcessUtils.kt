@@ -17,30 +17,34 @@ internal fun runCommand(
     capture: Boolean = false,
     check: Boolean = true,
 ): CommandResult {
-    val processCommand = platformProcessCommand(command)
-    val builder = ProcessBuilder(processCommand)
-    if (cwd != null) builder.directory(cwd)
-    builder.redirectErrorStream(true)
-    val environment = builder.environment()
-    val javaHome = System.getProperty("java.home")
-    environment["JAVA_HOME"] = javaHome
-    environment["PATH"] = "$javaHome/bin${File.pathSeparator}${environment["PATH"].orEmpty()}"
+    val prepared = prepareProcessCommand(command)
+    try {
+        val builder = ProcessBuilder(prepared.command)
+        if (cwd != null) builder.directory(cwd)
+        builder.redirectErrorStream(true)
+        val environment = builder.environment()
+        val javaHome = System.getProperty("java.home")
+        environment["JAVA_HOME"] = javaHome
+        environment["PATH"] = "$javaHome/bin${File.pathSeparator}${environment["PATH"].orEmpty()}"
 
-    val process = builder.start()
-    val output = if (capture) {
-        process.inputStream.readBytes().toString(Charsets.UTF_8)
-    } else {
-        process.inputStream.copyTo(System.out)
-        ""
+        val process = builder.start()
+        val output = if (capture) {
+            process.inputStream.readBytes().toString(Charsets.UTF_8)
+        } else {
+            process.inputStream.copyTo(System.out)
+            ""
+        }
+        val exitCode = process.waitFor()
+        if (check && exitCode != 0) {
+            throw GradleException(
+                "Command failed ($exitCode): ${command.joinToString(" ")}" +
+                    if (output.isNotBlank()) "\n$output" else ""
+            )
+        }
+        return CommandResult(exitCode, output)
+    } finally {
+        prepared.responseFile?.delete()
     }
-    val exitCode = process.waitFor()
-    if (check && exitCode != 0) {
-        throw GradleException(
-            "Command failed ($exitCode): ${command.joinToString(" ")}" +
-                if (output.isNotBlank()) "\n$output" else ""
-        )
-    }
-    return CommandResult(exitCode, output)
 }
 
 internal data class TimedCommandResult(
@@ -119,6 +123,43 @@ private fun platformProcessCommand(command: List<String>): List<String> {
     val commandLine = command.joinToString(" ") { windowsCmdQuote(it) }
     return listOf("cmd.exe", "/d", "/s", "/c", "\"$commandLine\"")
 }
+
+private data class PreparedProcessCommand(
+    val command: List<String>,
+    val responseFile: File? = null,
+)
+
+private fun prepareProcessCommand(command: List<String>): PreparedProcessCommand {
+    require(command.isNotEmpty()) { "Command must not be empty" }
+    if (!isWindowsHost() || !isKotlinNativeBatchCompiler(command.first()) || estimatedCommandLength(command) < 7000) {
+        return PreparedProcessCommand(platformProcessCommand(command))
+    }
+
+    // cmd.exe has an ~8 KiB command-line ceiling. Runtime Loader's cache-enabled MinGW builds can
+    // exceed that once the compiler is passed dozens of -library/-Xcached-library pairs.
+    // Kotlin/Native supports @argfile expansion itself, so keep the batch invocation short.
+    val responseFile = File.createTempFile("runtime-loader-konanc-", ".args")
+    responseFile.writeText(
+        command.drop(1).joinToString("\r\n", postfix = "\r\n", transform = ::kotlinCompilerResponseArgument)
+    )
+    return PreparedProcessCommand(
+        command = platformProcessCommand(listOf(command.first(), "@${responseFile.absolutePath}")),
+        responseFile = responseFile,
+    )
+}
+
+private fun isKotlinNativeBatchCompiler(path: String): Boolean {
+    val file = File(path)
+    if (file.extension.lowercase() !in setOf("bat", "cmd")) return false
+    return file.nameWithoutExtension.startsWith("kotlinc-native", ignoreCase = true)
+}
+
+private fun estimatedCommandLength(command: List<String>): Int =
+    command.sumOf { it.length + 3 }
+
+private fun kotlinCompilerResponseArgument(value: String): String =
+    if (value.none(Char::isWhitespace) && '"' !in value) value
+    else "\"${value.replace("\"", "\\\"")}\""
 
 private fun windowsCmdQuote(value: String): String =
     "\"" + value.replace("%", "%%").replace("\"", "\"\"") + "\""
