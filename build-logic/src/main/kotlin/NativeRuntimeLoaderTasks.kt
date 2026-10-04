@@ -101,11 +101,25 @@ abstract class BuildNativeRuntimeLoaderTask : DefaultTask() {
 
     private fun resolveMissingNativeKlibs(uniqueName: String, versions: Set<String>): List<File> {
         if (':' !in uniqueName || versions.isEmpty()) return emptyList()
+        val group = uniqueName.substringBefore(':')
+        val module = uniqueName.substringAfter(':')
+        val parentModule = module.substringBefore("-cinterop-", missingDelimiterValue = "")
+            .ifEmpty { module }
+        val coordinate = "$group:$parentModule"
+        val versionSelectors = buildList {
+            addAll(versions.sortedDescending())
+            if (parentModule != module) {
+                versions.asSequence()
+                    .filter { version -> version.firstOrNull()?.isDigit() == true && '+' !in version && ',' !in version }
+                    .map { version -> "[0,$version)" }
+                    .forEach(::add)
+            }
+        }.distinct()
         val nativeTargetAttribute = Attribute.of("org.jetbrains.kotlin.native.target", String::class.java)
         val resolved = linkedSetOf<File>()
-        versions.sortedDescending().forEach { version ->
+        versionSelectors.forEach { version ->
             val configuration = project.configurations.detachedConfiguration(
-                project.dependencies.create("$uniqueName:$version")
+                project.dependencies.create("$coordinate:$version")
             ).apply {
                 isTransitive = false
                 attributes {

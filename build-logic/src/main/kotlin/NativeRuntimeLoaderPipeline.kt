@@ -369,10 +369,28 @@ internal class NativeRuntimeLoaderPipeline(
         return versions
     }
 
+    private fun cinteropParentUniqueName(uniqueName: String): String? {
+        if (':' !in uniqueName) return null
+        val group = uniqueName.substringBefore(':')
+        val module = uniqueName.substringAfter(':')
+        val parentModule = module.substringBefore("-cinterop-", missingDelimiterValue = "")
+        return parentModule.takeIf(String::isNotEmpty)?.let { "$group:$it" }
+    }
+
+    private fun cachedMavenVersion(path: File): String? {
+        val marker = "/caches/modules-2/files-2.1/"
+        val normalized = path.invariantSeparatorsPath
+        val index = normalized.indexOf(marker)
+        if (index < 0) return null
+        val relative = normalized.substring(index + marker.length)
+        return relative.split('/').getOrNull(2)?.takeIf(String::isNotEmpty)
+    }
+
     private fun findMavenKlib(uniqueName: String, evidence: Set<String>, moduleCache: File): File {
         if (':' !in uniqueName) throw GradleException("Missing non-Maven KLIB identity: $uniqueName")
         val group = uniqueName.substringBefore(':')
         val module = uniqueName.substringAfter(':')
+        val parentModule = cinteropParentUniqueName(uniqueName)?.substringAfter(':')
         val groupDir = File(moduleCache, group)
         val suffix = when (target) {
             "linux_x64" -> "linuxx64"
@@ -383,7 +401,10 @@ internal class NativeRuntimeLoaderPipeline(
             "ios_arm64" -> "iosarm64"
             else -> throw GradleException("Unsupported runtime-loader target: $target")
         }
-        val artifactDirs = listOf(File(groupDir, "$module-$suffix"), File(groupDir, module))
+        val artifactModules = listOfNotNull(module, parentModule).distinct()
+        val artifactDirs = artifactModules.flatMap { artifactModule ->
+            listOf(File(groupDir, "$artifactModule-$suffix"), File(groupDir, artifactModule))
+        }.distinct()
         val availableVersions = artifactDirs.flatMap { dir ->
             dir.listFiles()?.filter { it.isDirectory }?.map { it.name }.orEmpty()
         }
@@ -448,7 +469,20 @@ internal class NativeRuntimeLoaderPipeline(
                 val info = if (platformPath.exists()) {
                     inspector.info(platformPath).also { implementation += it.name }
                 } else {
-                    inspector.info(findMavenKlib(name, evidence[name].orEmpty(), moduleCache))
+                    val parentName = cinteropParentUniqueName(name)
+                    val dependerVersions = graph.values.asSequence()
+                        .filter { name in it.depends }
+                        .mapNotNull { cachedMavenVersion(it.path) }
+                        .toSet()
+                    val resolutionEvidence = buildSet {
+                        addAll(evidence[name].orEmpty())
+                        if (parentName != null) {
+                            addAll(evidence[parentName].orEmpty())
+                            graph[parentName]?.path?.let(::cachedMavenVersion)?.let(::add)
+                        }
+                        addAll(dependerVersions)
+                    }
+                    inspector.info(findMavenKlib(name, resolutionEvidence, moduleCache))
                         .also { compatibility += it.name }
                 }
                 graph[info.name] = info

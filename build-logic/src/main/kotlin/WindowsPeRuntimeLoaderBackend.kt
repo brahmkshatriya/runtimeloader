@@ -649,18 +649,24 @@ internal class WindowsPeRuntimeLoaderBackend(
         val ar = llvmTool("llvm-ar")
         val objcopy = llvmTool("llvm-objcopy")
         val definitionsByMember = linkedMapOf<String, MutableSet<String>>()
-        val archivePrefix = "${archive.absolutePath}:"
-
         runCommand(listOf(nm, "-A", "-g", "--defined-only", archive.absolutePath), capture = true)
             .output.lineSequence()
-            .forEach { line ->
-                val match = Regex("^(.*): [0-9A-Fa-f]+ [A-Za-z] (.+)$").matchEntire(line.trim())
+            .forEach { raw ->
+                val line = raw.trim()
+                val match = Regex("^(.*?)\\s+[0-9A-Fa-f]+\\s+[A-Za-z]\\s+(.+)$").matchEntire(line)
                     ?: return@forEach
                 val symbol = match.groupValues[2]
                 if (symbol !in collisions) return@forEach
-                val qualifiedMember = match.groupValues[1]
-                if (!qualifiedMember.startsWith(archivePrefix)) return@forEach
-                val member = qualifiedMember.removePrefix(archivePrefix)
+                val location = match.groupValues[1].removeSuffix(":")
+                val colonMarker = "${archive.name}:"
+                val parenMarker = "${archive.name}("
+                val member = when {
+                    colonMarker in location -> location.substringAfter(colonMarker)
+                    parenMarker in location && location.endsWith(')') ->
+                        location.substringAfter(parenMarker).dropLast(1)
+                    else -> return@forEach
+                }
+                if (member.isBlank()) return@forEach
                 definitionsByMember.getOrPut(member) { linkedSetOf() }.add(symbol)
             }
 

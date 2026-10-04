@@ -62,8 +62,8 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
 
-  linux:
-    name: Validate Linux, JVM, Wasm, Android
+  release-check:
+    name: Validate release packaging
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -81,12 +81,145 @@ jobs:
       - uses: android-actions/setup-android@v4
         name: Set up Android SDK
 
-      - name: Install Android SDK and Linux desktop dependencies
+      - name: Install Android SDK required by release checks
         shell: bash
         run: |
           set -euo pipefail
           sdkmanager 'platforms;android-36' 'platforms;android-37.0' 'build-tools;36.0.0'
 
+      - name: Run release packaging checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :runtime-loader:check \
+            validateRuntimeLoaderGradlePlugin \
+            publishRuntimeLoaderToReleaseTestRepository \
+            :demo:store:validateExtensionsStore
+
+  jvm:
+    name: Validate JVM
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.1
+        name: Set up JDK 21
+        with:
+          distribution: corretto
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Run JVM runtime-loader integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :demo:apps:jvm:runtimeLoaderJvmIntegrationTest \
+            publishRuntimeLoaderToReleaseTestRepository
+          ./gradlew \
+            -p fixture/published-consumer \
+            --no-daemon \
+            --stacktrace \
+            clean \
+            :host:runtimeLoaderJvmIntegrationTest
+
+  wasm:
+    name: Validate WasmJs
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.1
+        name: Set up JDK 21
+        with:
+          distribution: corretto
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Run WasmJs runtime-loader integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :demo:apps:web:runtimeLoaderWasmJsIntegrationTest
+
+  android:
+    name: Validate Android
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.1
+        name: Set up JDK 21
+        with:
+          distribution: corretto
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - uses: android-actions/setup-android@v4
+        name: Set up Android SDK
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-36' 'platforms;android-37.0' 'build-tools;36.0.0'
+
+      - name: Run Android validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :demo:apps:android:lintDebug \
+            :demo:apps:android:assembleDebug
+
+      - uses: actions/upload-artifact@v7.0.1
+        if: failure()
+        name: Preserve Android validation reports
+        with:
+          name: runtime-loader-android-reports-${{ needs.prepare.outputs.version }}
+          path: demo/apps/android/build/reports
+          if-no-files-found: ignore
+          retention-days: 5
+
+  linux:
+    name: Validate Linux x64
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.1
+        name: Set up JDK 21
+        with:
+          distribution: corretto
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Install Linux desktop dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes \
             build-essential \
@@ -141,32 +274,116 @@ jobs:
           sudo cmake --install "$RUNNER_TEMP/SDL3-build"
           sudo ldconfig
 
-      - name: Run release and platform gates
+      - name: Run Linux runtime-loader integration tests
         shell: bash
         run: |
           set -euo pipefail
           xvfb-run --auto-servernum ./gradlew \
             --no-daemon \
             --stacktrace \
-            runtimeLoaderReleaseCheck \
             :demo:apps:linux:runtimeLoaderNativeIntegrationTest \
-            :demo:apps:web:runtimeLoaderWasmJsIntegrationTest \
-            :demo:apps:android:lintDebug \
-            :demo:apps:android:assembleDebug \
-            :demo:apps:windows:runtimeLoaderNativeBuildMingwX64 \
-            :demo:apps:ios:compileKotlinIosArm64 \
-            :demo:store:packageExternalExtensionStore
+            publishRuntimeLoaderToReleaseTestRepository
+          xvfb-run --auto-servernum ./gradlew \
+            -p fixture/published-consumer \
+            --no-daemon \
+            --stacktrace \
+            clean \
+            :host:runtimeLoaderNativeIntegrationTest
 
       - uses: actions/upload-artifact@v7.0.1
         if: failure()
         name: Preserve Linux validation reports
         with:
           name: runtime-loader-linux-reports-${{ needs.prepare.outputs.version }}
-          path: |
-            build/reports
-            demo/apps/android/build/reports
+          path: build/reports
           if-no-files-found: ignore
           retention-days: 5
+
+  extension-store:
+    name: Validate extension store packaging
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.1
+        name: Set up JDK 21
+        with:
+          distribution: corretto
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - uses: android-actions/setup-android@v4
+        name: Set up Android SDK
+
+      - name: Install Android SDK and Linux desktop dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-36' 'platforms;android-37.0' 'build-tools;36.0.0'
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            cmake \
+            libdbus-1-dev \
+            libfontconfig1-dev \
+            libfreetype-dev \
+            libdrm-dev \
+            libegl1-mesa-dev \
+            libgbm-dev \
+            libgl-dev \
+            libgl1-mesa-dev \
+            libgles2-mesa-dev \
+            libibus-1.0-dev \
+            libpng-dev \
+            libudev-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxext-dev \
+            libxfixes-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxrandr-dev \
+            libxrender-dev \
+            libxss-dev \
+            libxtst-dev \
+            llvm \
+            ninja-build \
+            pkg-config \
+            wayland-protocols \
+            zlib1g-dev
+
+          sdl_archive="$RUNNER_TEMP/SDL3-3.4.10.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "$sdl_archive" \
+            https://github.com/libsdl-org/SDL/releases/download/release-3.4.10/SDL3-3.4.10.tar.gz
+          echo '12b34280415ec8418c864408b93d008a20a6530687ee613d60bfbd20411f2785  '"$sdl_archive" | sha256sum --check
+          tar --extract --gzip --file "$sdl_archive" --directory "$RUNNER_TEMP"
+          cmake \
+            -S "$RUNNER_TEMP/SDL3-3.4.10" \
+            -B "$RUNNER_TEMP/SDL3-build" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DSDL_SHARED=ON \
+            -DSDL_STATIC=OFF \
+            -DSDL_TEST_LIBRARY=OFF \
+            -DSDL_TESTS=OFF
+          cmake --build "$RUNNER_TEMP/SDL3-build" --parallel 2
+          sudo cmake --install "$RUNNER_TEMP/SDL3-build"
+          sudo ldconfig
+
+      - name: Package the external extension store
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :demo:store:packageExternalExtensionStore
 
   windows:
     name: Validate native Windows x64
@@ -194,7 +411,7 @@ jobs:
             :demo:apps:windows:runtimeLoaderNativeSmoke
 
   macos:
-    name: Validate macOS and iOS frameworks
+    name: Validate macOS Native
     needs: prepare
     runs-on: macos-15
     timeout-minutes: 120
@@ -215,7 +432,6 @@ jobs:
           set -euo pipefail
           xcodebuild -version
           xcrun --sdk macosx --show-sdk-version
-          xcrun --sdk iphoneos --show-sdk-version
 
       - name: Install SDL3 framework
         shell: bash
@@ -246,7 +462,7 @@ jobs:
           trap - EXIT
           echo "COMPOSE_MACOS_SDL_FRAMEWORK_DIR=$framework_dir" >> "$GITHUB_ENV"
 
-      - name: Run Mach-O runtime smoke and iOS framework link
+      - name: Run Mach-O runtime smoke
         shell: bash
         run: |
           set -euo pipefail
@@ -259,7 +475,38 @@ jobs:
           ./gradlew \
             --no-daemon \
             --stacktrace \
-            ":demo:apps:$macos_project:runtimeLoaderNativeSmoke" \
+            ":demo:apps:$macos_project:runtimeLoaderNativeSmoke"
+
+  ios:
+    name: Validate iOS arm64
+    needs: prepare
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-java@v6.0.1
+        name: Set up JDK 21
+        with:
+          distribution: corretto
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Verify Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Link iOS runtime-loader frameworks
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
             :demo:apps:ios:runtimeLoaderNativeBuildIosArm64
 
           test -d demo/apps/ios/build/runtime-loader/iosArm64/out/RuntimeLoaderDemoHost.framework
@@ -278,9 +525,15 @@ jobs:
     if: needs.prepare.outputs.release == 'true'
     needs:
       - prepare
+      - release-check
+      - jvm
+      - wasm
+      - android
       - linux
+      - extension-store
       - windows
       - macos
+      - ios
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:

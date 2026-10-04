@@ -85,11 +85,11 @@ restored Gradle properties, following the same scheme used by the Landscapist Na
 workflow. Do not include `signing.secretKeyRingFile` in the secret itself because the runner path is
 generated at release time.
 
-The Linux job runs the consolidated release check plus the Linux Native, Wasm, and Android demo
-gates. The Windows job executes the real PE host/modules on a Windows runner. The macOS job executes
-the matching Mach-O host smoke tests, links the iOS arm64 host/module frameworks with Xcode present,
-and resolves the public Swift package. Central and the Plugin Portal are not contacted until all
-three jobs pass.
+CI keeps each target surface isolated on its own runner: JVM, WasmJs, Android, Linux x64,
+Windows x64, macOS Native, and iOS arm64 each have an independent validation job. Release packaging
+and external extension-store packaging run as separate integration jobs rather than being folded
+into a target result. Central and the Plugin Portal are not contacted until every target and
+integration job passes.
 
 ## 4. Maven Central credentials and signing
 
