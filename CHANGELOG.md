@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.1.0-alpha03
+## 0.1.0
 
-Release-CI portability follow-up.
+First non-alpha release after cross-platform release validation.
 
 - Execute Kotlin/Native `.bat`/`.cmd` tool launchers through `cmd.exe` on Windows, including `klib`
   inspection and Runtime Loader's patched `kotlinc-native` wrapper.

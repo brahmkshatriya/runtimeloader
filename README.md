@@ -1,5 +1,7 @@
 # Kotlin Runtime Loader
 
+[![Maven Central](https://img.shields.io/maven-central/v/dev.brahmkshatriya.runtimeloader/runtime-loader?label=Maven%20Central)](https://central.sonatype.com/artifact/dev.brahmkshatriya.runtimeloader/runtime-loader)
+
 Load separately compiled Kotlin code into a running Kotlin Multiplatform app.
 
 Runtime Loader gives your app a small common API for attaching code at runtime. Your application still owns the extension model, permissions, metadata, update system, UI, and trust policy.
@@ -26,15 +28,9 @@ Typical uses include:
 | iOS arm64 | Build and signing support |
 | iOS Simulator arm64 | Supported for compilation |
 
-For the `0.1.x` releases, use Kotlin `2.4.20` and Gradle `9.6` or newer in the Gradle 9.x line.
-
 ## Installation
 
-Version used below:
-
-```text
-0.1.0-alpha03
-```
+Use the current version shown in the Maven Central badge above for the library and Runtime Loader Gradle plugins.
 
 Make sure your build can use Maven Central and the Gradle Plugin Portal:
 
@@ -60,8 +56,8 @@ Add Runtime Loader to the host application:
 
 ```kotlin
 plugins {
-    kotlin("multiplatform") version "2.4.20"
-    id("dev.brahmkshatriya.runtime-loader.host") version "0.1.0-alpha03"
+    kotlin("multiplatform")
+    id("dev.brahmkshatriya.runtime-loader.host") version "<version>"
 }
 
 kotlin {
@@ -70,7 +66,7 @@ kotlin {
     linuxX64()
 
     sourceSets.commonMain.dependencies {
-        implementation("dev.brahmkshatriya.runtimeloader:runtime-loader:0.1.0-alpha03")
+        implementation("dev.brahmkshatriya.runtimeloader:runtime-loader:<version>")
     }
 }
 ```
@@ -79,8 +75,8 @@ For a runtime-loadable module, apply the module plugin:
 
 ```kotlin
 plugins {
-    kotlin("multiplatform") version "2.4.20"
-    id("dev.brahmkshatriya.runtime-loader.module") version "0.1.0-alpha03"
+    kotlin("multiplatform")
+    id("dev.brahmkshatriya.runtime-loader.module") version "<version>"
 }
 ```
 
@@ -134,7 +130,7 @@ kotlin {
 
     sourceSets.commonMain.dependencies {
         implementation(project(":extension-api"))
-        implementation("dev.brahmkshatriya.runtimeloader:runtime-loader:0.1.0-alpha03")
+        implementation("dev.brahmkshatriya.runtimeloader:runtime-loader:<version>")
     }
 }
 ```
@@ -247,7 +243,7 @@ If your Native project uses the Compose Native compatibility setup used by this 
 
 ```kotlin
 plugins {
-    id("dev.brahmkshatriya.runtime-loader.compose-native-compatibility") version "0.1.0-alpha03"
+    id("dev.brahmkshatriya.runtime-loader.compose-native-compatibility") version "<version>"
 }
 ```
 
@@ -308,7 +304,7 @@ There is also a small consumer-style fixture under `fixture/published-consumer` 
 
 ## Version status
 
-`0.1.0-alpha03` is an alpha release. APIs and Native implementation details may still change before a stable release.
+Check the changelog for release-specific compatibility notes and migration information.
 
 ## License
 

@@ -13,6 +13,6 @@ kotlin {
     linuxX64()
     sourceSets.commonMain.dependencies {
         implementation(project(":api"))
-        implementation("dev.brahmkshatriya.runtimeloader:runtime-loader:0.1.0-alpha03")
+        implementation("dev.brahmkshatriya.runtimeloader:runtime-loader:0.1.0")
     }
 }
