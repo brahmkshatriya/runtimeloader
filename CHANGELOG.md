@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+Release-fixture compatibility fix.
+
+- Restore the root Kotlin Multiplatform `apply false` declaration required for sibling projects to share the Kotlin/Native build service under Gradle 9.6 and Kotlin 2.4.20.
+
 ## 0.1.2
 
 Consumer-facing Gradle plugin cleanup.
