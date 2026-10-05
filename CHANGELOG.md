@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+Consumer-facing Gradle plugin cleanup.
+
+- Remove the redundant standalone Compose Native compatibility plugin; host and module plugins apply the required Native dependency alignment automatically.
+- Remove stale demo and fixture Gradle configuration that duplicated existing plugin management or Compose desktop dependency behavior.
+
 ## 0.1.1
 
 Release workflow follow-up.

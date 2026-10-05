@@ -7,8 +7,8 @@ pluginManagement {
     }
     plugins {
         kotlin("multiplatform") version "2.4.20"
-        id("dev.brahmkshatriya.runtime-loader.host") version "0.1.1"
-        id("dev.brahmkshatriya.runtime-loader.module") version "0.1.1"
+        id("dev.brahmkshatriya.runtime-loader.host") version "0.1.2"
+        id("dev.brahmkshatriya.runtime-loader.module") version "0.1.2"
     }
 }
 
