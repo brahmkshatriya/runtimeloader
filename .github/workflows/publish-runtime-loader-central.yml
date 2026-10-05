@@ -467,11 +467,11 @@ jobs:
             --stacktrace \
             :demo:store:packageExternalExtensionStore
 
-  windows:
-    name: Validate native Windows x64
+  windows-build:
+    name: Build Windows x64 runtime artifacts
     needs: prepare
-    runs-on: windows-2022
-    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -483,14 +483,56 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
+      - name: Cross-build Windows x64 runtime artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "x86_64"
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            :demo:apps:windows:runtimeLoaderNativeBuildMingwX64
+          test -f demo/apps/windows/build/runtime-loader/mingwX64/out/app.exe
+          test -f demo/apps/windows/build/runtime-loader/mingwX64/out/runtime-loader-about.dll
+          test -f demo/apps/windows/build/runtime-loader/mingwX64/out/runtime-loader-counter.dll
+
+      - uses: actions/upload-artifact@v7.0.1
+        name: Upload Windows x64 runtime artifacts
+        with:
+          name: runtime-loader-windows-x64-${{ needs.prepare.outputs.version }}
+          path: demo/apps/windows/build/runtime-loader/mingwX64/out
+          if-no-files-found: error
+          retention-days: 5
+
+  windows:
+    name: Validate native Windows x64
+    needs:
+      - prepare
+      - windows-build
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v8
+        name: Download Windows x64 runtime artifacts
+        with:
+          name: runtime-loader-windows-x64-${{ needs.prepare.outputs.version }}
+          path: runtime-loader-windows-x64
+
       - name: Run PE runtime smoke tests
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          .\gradlew.bat `
-            --no-daemon `
-            --stacktrace `
-            :demo:apps:windows:runtimeLoaderNativeSmoke
+          Set-Location runtime-loader-windows-x64
+
+          & .\app.exe .\runtime-loader-about.dll --smoke
+          if ($LASTEXITCODE -ne 0) {
+            throw "about module smoke failed with exit code $LASTEXITCODE"
+          }
+
+          & .\app.exe .\runtime-loader-counter.dll --smoke
+          if ($LASTEXITCODE -ne 0) {
+            throw "counter module smoke failed with exit code $LASTEXITCODE"
+          }
 
   macos-arm64:
     name: Validate macOS arm64
