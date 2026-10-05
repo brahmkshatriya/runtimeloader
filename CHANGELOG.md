@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+Release workflow follow-up.
+
+- Split Maven Central and Gradle Plugin Portal publishing into independent jobs so either destination can be retried without republishing the other.
+
 ## 0.1.0
 
 First non-alpha release after cross-platform release validation.
