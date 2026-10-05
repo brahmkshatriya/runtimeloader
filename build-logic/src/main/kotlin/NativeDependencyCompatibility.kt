@@ -8,7 +8,7 @@ import org.gradle.api.Project
  * publication from those edges when they originate in an already platform-specific module.
  * Keep supported Compose Native targets entirely on the matching concrete platform publications.
  */
-internal fun Project.configureNativeDependencyCompatibility() {
+public fun Project.configureNativeDependencyCompatibility() {
     val marker = "dev.brahmkshatriya.runtime-loader.native-compatibility-configured"
     if (extensions.extraProperties.has(marker)) return
     extensions.extraProperties.set(marker, true)
@@ -104,8 +104,6 @@ internal fun Project.configureNativeDependencyCompatibility() {
     }
 }
 
-internal fun Project.configureLinuxX64DependencyCompatibility() =
-    configureNativeDependencyCompatibility()
 
 /**
  * Resolve the fork version from the consumer project instead of pinning Runtime Loader to the

@@ -6,9 +6,9 @@ import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 
 /**
- * Demo plugins intentionally have no compile/runtime dependency on the publishable Runtime Loader
- * plugin implementation. They interact only with its named Gradle extension properties so the demo
- * layer cannot leak implementation classes or plugin markers into the release artifact.
+ * The demo plugins are repository-local and excluded from publication. Extension/store integration
+ * still uses named Gradle properties so demo-specific types never become part of Runtime Loader's
+ * published API.
  */
 internal data class RuntimeLoaderModuleView(
     val moduleId: Property<String>,

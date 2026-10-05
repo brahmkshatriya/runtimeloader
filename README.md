@@ -239,15 +239,7 @@ interface UiExtension {
 
 The separately compiled module can implement that interface and render inside the host application's existing Compose UI.
 
-If your Native project uses the Compose Native compatibility setup used by this repository, the optional plugin is:
-
-```kotlin
-plugins {
-    id("dev.brahmkshatriya.runtime-loader.compose-native-compatibility") version "<version>"
-}
-```
-
-Most consumers should not apply it unless their Native Compose dependency graph requires it.
+The Runtime Loader host and module plugins automatically apply the Native dependency alignment they need. Runtime Loader does not require a separate Compose compatibility plugin.
 
 ## Platform notes
 

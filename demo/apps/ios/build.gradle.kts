@@ -1,7 +1,6 @@
 plugins {
     kotlin("multiplatform")
     id("dev.brahmkshatriya.runtime-loader.host")
-    id("dev.brahmkshatriya.runtime-loader.compose-native-compatibility")
 }
 
 runtimeLoaderHost {

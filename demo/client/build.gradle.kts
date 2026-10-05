@@ -6,7 +6,7 @@ plugins {
     id("com.android.kotlin.multiplatform.library")
     id("org.jetbrains.compose")
     id("dev.brahmkshatriya.compose")
-    id("dev.brahmkshatriya.runtime-loader.compose-native-compatibility")
+    id("dev.brahmkshatriya.demo.native-compatibility")
 }
 
 kotlin {

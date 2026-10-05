@@ -4,6 +4,7 @@ plugins {
 }
 
 dependencies {
+    implementation(project(":"))
     implementation(localGroovy())
 }
 
@@ -16,6 +17,10 @@ gradlePlugin {
         create("demoExtension") {
             id = "dev.brahmkshatriya.demo.extension"
             implementationClass = "dev.brahmkshatriya.runtimeloader.demo.gradle.DemoExtensionPlugin"
+        }
+        create("demoNativeCompatibility") {
+            id = "dev.brahmkshatriya.demo.native-compatibility"
+            implementationClass = "dev.brahmkshatriya.runtimeloader.demo.gradle.DemoNativeCompatibilityPlugin"
         }
     }
 }

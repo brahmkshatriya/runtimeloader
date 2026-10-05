@@ -123,7 +123,6 @@ The Plugin Portal release contains only:
 ```text
 dev.brahmkshatriya.runtime-loader.host
 dev.brahmkshatriya.runtime-loader.module
-dev.brahmkshatriya.runtime-loader.compose-native-compatibility
 ```
 
 The demo plugins under `build-logic:demo-plugins` are intentionally excluded. Configure the Plugin

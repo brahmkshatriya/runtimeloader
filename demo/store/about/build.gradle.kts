@@ -98,9 +98,6 @@ kotlin {
         iosArm64Main.dependencies {
             compileOnly(projects.runtimeLoader)
         }
-        jvmMain.dependencies {
-            implementation(compose.desktop.currentOs)
-        }
         wasmJsMain.dependencies {
             implementation(compose.ui)
         }

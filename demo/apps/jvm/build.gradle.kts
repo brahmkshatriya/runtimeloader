@@ -15,7 +15,6 @@ kotlin {
     sourceSets.jvmMain.dependencies {
         implementation(projects.demo.client)
         implementation(projects.runtimeLoader)
-        implementation(compose.desktop.currentOs)
         implementation(compose.material3)
     }
 }

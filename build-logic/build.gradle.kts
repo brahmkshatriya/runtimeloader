@@ -70,19 +70,6 @@ gradlePlugin {
                 }
             }
         }
-        create("runtimeLoaderComposeNativeCompatibility") {
-            id = "dev.brahmkshatriya.runtime-loader.compose-native-compatibility"
-            implementationClass = "dev.brahmkshatriya.runtimeloader.gradle.ComposeNativeCompatibilityPlugin"
-            displayName = "Kotlin Runtime Loader Compose Native Compatibility"
-            description = "Align Compose Native fork dependencies with the version selected by the consuming project."
-            tags.set(listOf("kotlin", "compose", "kotlin-native", "multiplatform"))
-            compatibility {
-                features {
-                    configurationCache = true
-                    isolatedProjects = false
-                }
-            }
-        }
     }
 }
 
